@@ -49,7 +49,7 @@ class scheduler:
         return
 
     def new_process(self):
-        proc_id = len(self.proc_info)
+        proc_id =len(self.proc_info)
         self.proc_info[proc_id] = {}
         self.proc_info[proc_id][PROC_PC] = 0
         self.proc_info[proc_id][PROC_ID] = proc_id
@@ -61,6 +61,7 @@ class scheduler:
     #   c7,i,c1,i
     # which means
     #   compute for 7, then i/o, then compute for 1, then i/o
+    
     def load_program(self, program):
         proc_id = self.new_process()
         for line in program.split(','):
@@ -124,11 +125,13 @@ class scheduler:
             self.curr_proc = pid
             self.move_to_running(STATE_READY)
             return
-        for pid in range(self.curr_proc + 1, len(self.proc_info)):
+        # linear ordering of the next process
+        for pid in range(self.curr_proc + 1, len(self.proc_info)): 
             if self.proc_info[pid][PROC_STATE] == STATE_READY:
                 self.curr_proc = pid
                 self.move_to_running(STATE_READY)
                 return
+                
         for pid in range(0, self.curr_proc + 1):
             if self.proc_info[pid][PROC_STATE] == STATE_READY:
                 self.curr_proc = pid
@@ -211,10 +214,12 @@ class scheduler:
 
         while self.get_num_active() > 0:
             clock_tick += 1
-
             # check for io finish
             io_done = False
+            # incomparable algebraic \times axis 
+            # \pi Process_i
             for pid in range(len(self.proc_info)):
+                # Resolve each of their finish times.
                 if clock_tick in self.io_finish_times[pid]:
                     io_done = True
                     self.move_to_ready(STATE_WAIT, pid)
