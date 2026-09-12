@@ -19,12 +19,36 @@ def random_seed(seed):
     return
 
 # process switch behavior
-SCHED_SWITCH_ON_IO = 'SWITCH_ON_IO'
-SCHED_SWITCH_ON_END = 'SWITCH_ON_END'
+# SCHED_SWITCH_ON_IO = 'SWITCH_ON_IO'
+# SCHED_SWITCH_ON_END = 'SWITCH_ON_END'
 
-# io finished behavior
-IO_RUN_LATER = 'IO_RUN_LATER'
-IO_RUN_IMMEDIATE = 'IO_RUN_IMMEDIATE'
+# # io finished behavior
+# IO_RUN_LATER = 'IO_RUN_LATER'
+# IO_RUN_IMMEDIATE = 'IO_RUN_IMMEDIATE'
+# # things a process can do
+# DO_COMPUTE = 'cpu'
+# DO_IO = 'io'
+# DO_IO_DONE = 'io_done'
+
+# type classes
+
+# Policies
+class IORunPolicy(Enum):
+    LATER = auto()
+    IMMEDIATE = auto()
+
+class SchedulerSwitchPolicy(Enum):
+    ON_IO = auto()
+    ON_END = auto()
+
+
+# Actions/ states within the process.
+class Instruction(Enum):
+    COMPUTE = auto()
+    IO = auto()
+    IO_DONE = auto()
+
+
 
 # # process states
 # STATE_RUNNING = 'RUNNING'
@@ -33,7 +57,7 @@ IO_RUN_IMMEDIATE = 'IO_RUN_IMMEDIATE'
 # STATE_WAIT = 'BLOCKED'
 
 
-
+# Type states.
 # ProcessState = RUNNING | READY | DONE | BLOCKED
 class ProcessState(Enum):
     RUNNING = auto()
@@ -48,32 +72,40 @@ class ProcessState(Enum):
 # PROC_ID = 'pid_'
 # PROC_STATE = 'proc_state_'
 
+# run time data classes
+
 # ---- A: the minimal factor most transitions need -------------------------
  
-@dataclass(frozen=True)
+# Run time mutable dataclass.
+@dataclass 
 class ProcessInfo:
     pid: int
     pc: int
     code: Tuple[str, ...]      # tuple, not list -> actually immutable
     state: ProcessState
 
-
-# things a process can do
-DO_COMPUTE = 'cpu'
-DO_IO = 'io'
-DO_IO_DONE = 'io_done'
-
-
-
 @dataclass(frozen=True)
+class SchedulerConfig:
+    process_switch_policy: SchedulerSwitchPolicy
+    io_done_policy: IORunPolicy
+    io_length: int
+
+# Global execution state machine for execution
+@dataclass
 class SchedulerState:
     proc_info: Dict[int, ProcessInfo]
     curr_proc: int
     io_finish_times: Dict[int, List[int]]
     clock_tick: int
-    process_switch_behavior: str
-    io_done_behavior: str
     io_length: int
+    io_done: bool
+
+# Result states.
+@dataclass
+class SchedulerStatistics:
+    cpu_busy: int
+    io_busy: int
+    clock_tick: int
 
 
 def parse(args: List[str]) -> Tuple[object, List[str]]:
@@ -97,8 +129,20 @@ def new_scheduler_state(process_switch_behavior, io_done_behavior, io_length) ->
                           clock_tick=0,
                           process_switch_behavior=process_switch_behavior,
                           io_done_behavior=io_done_behavior,
-                          io_length=io_length)
+                          io_length=io_length,
+                          io_done=False)
 
+# 0 ->SchedulerStatistics Class
+def new_scheduler_statistics() -> SchedulerStatistics:
+    return SchedulerStatistics(io_starts=0, io_finishes=0, total_time=0, switches=0)
+
+# Options -> Schedulerconfig
+def scheduler_config_from_options(options):
+    return SchedulerConfig(
+        process_switch_behavior=SchedulerSwitchPolicy(options.process_switch_behavior),
+        io_done_behavior=IORunPolicy(options.io_done_behavior),
+        io_length=options.io_length,
+    )
 
 # modify in place 
 def new_process(scheduler_state: SchedulerState) -> Tuple[SchedulerState, int]:
@@ -126,11 +170,11 @@ def load_program(program: str, scheduler_state: SchedulerState) -> SchedulerStat
         if opcode == 'c': # compute
             num = int(line[1:])
             for i in range(num):
-                scheduler_state.proc_info[proc_id].code.append(DO_COMPUTE)
+                scheduler_state.proc_info[proc_id].code.append(Instruction.COMPUTE)
         elif opcode == 'i':
-            scheduler_state.proc_info[proc_id].code.append(DO_IO)
+            scheduler_state.proc_info[proc_id].code.append(Instruction.IO)
             # add one compute to HANDLE the I/O completion
-            scheduler_state.proc_info[proc_id].code.append(DO_IO_DONE)
+            scheduler_state.proc_info[proc_id].code.append(Instruction.IO_DONE)
         else:
             print('bad opcode %s (should be c or i)' % opcode)
             exit(1)
@@ -151,32 +195,32 @@ def load(program_description: str, scheduler_state: SchedulerState) -> Scheduler
     num_instructions, chance_cpu = int(tmp[0]), float(tmp[1])/100.0
     for i in range(num_instructions):
         if random.random() < chance_cpu:
-            SchedulerState.proc_info[pid].code.append(DO_COMPUTE)
+            SchedulerState.proc_info[pid].code.append(Instruction.COMPUTE)
         else:
-            SchedulerState.proc_info[pid].code.append(DO_IO)
+            SchedulerState.proc_info[pid].code.append(Instruction.IO)
             # add one compute to HANDLE the I/O completion
-            SchedulerState.proc_info[pid].code.append(DO_IO_DONE)
+            SchedulerState.proc_info[pid].code.append(Instruction.IO_DONE)
     return SchedulerState
 
 # Transitions 
 
 # check current state if valid.
 
-# Move to running:
-def move_to_running(p: ProcessInfo, expected: ProcessState) -> ProcessInfo:
+# transition to running:
+def transition_to_running(p: ProcessInfo, expected: ProcessState) -> ProcessInfo:
     assert p.state == expected, f"{p.pid}: expected {expected}, got {p.state}"
     return replace(p, state=ProcessState.RUNNING)
  
-def move_to_ready(p: ProcessInfo, expected: ProcessState) -> ProcessInfo:
+def transition_to_ready(p: ProcessInfo, expected: ProcessState) -> ProcessInfo:
     assert p.state == expected
     return replace(p, state=ProcessState.READY)
  
-def move_to_wait(p: ProcessInfo, expected: ProcessState) -> ProcessInfo:
+def transition_to_wait(p: ProcessInfo, expected: ProcessState) -> ProcessInfo:
     assert p.state == expected
     return replace(p, state=ProcessState.BLOCKED)
  
 
-def move_to_done(p: ProcessInfo, expected: ProcessState) -> ProcessInfo:
+def transition_to_done(p: ProcessInfo, expected: ProcessState) -> ProcessInfo:
     assert p.state == expected, f"{p.pid}: expected {expected}, got {p.state}"
     return replace(p, state=ProcessState.DONE)
  
@@ -238,49 +282,93 @@ def next_proc(scheduler_state: SchedulerState, pid: int = -1) -> SchedulerState:
     if pid != -1:
         scheduler_state.curr_proc = pid
         proc_info = get_current_proc_info(scheduler_state)
-        new_proc_info = move_to_running(proc_info, ProcessState.READY)
+        new_proc_info = transition_to_running(proc_info, ProcessState.READY)
         return set_proc_info_by_pid(pid, new_proc_info, scheduler_state)
     
 
-    # Constructor first priority process and move it to running 
+    # Constructor first priority process and transition it to running 
     for pid in range(scheduler_state.curr_proc + 1, get_num_processes(scheduler_state)):
         if scheduler_state.proc_info[pid].state == ProcessState.READY:
             scheduler_state.curr_proc = pid
             proc_info = get_current_proc_info(scheduler_state)
-            new_proc_info = move_to_running(proc_info, ProcessState.READY)
+            new_proc_info = transition_to_running(proc_info, ProcessState.READY)
             return set_proc_info_by_pid(pid, new_proc_info, scheduler_state) 
     
     for pid in range(0, scheduler_state.curr_proc + 1):
         if proc_info[pid].state == ProcessState.READY:
             scheduler_state.curr_proc = pid 
             proc_info = get_current_proc_info(scheduler_state)
-            new_proc_info = move_to_running(proc_info, ProcessState.READY)
+            new_proc_info = transition_to_running(proc_info, ProcessState.READY)
             return set_proc_info_by_pid(pid, new_proc_info, scheduler_state)
 
-#formally effectful
+# resolve running to done
 def resolve_done(scheduler_state: SchedulerState) -> SchedulerState:
     curr_proc_info = get_current_proc_info(scheduler_state)
     # take if (curr_proc.state) == running  then (curr_proc.state) = done
     if len(curr_proc_info.code) == 0 and curr_proc_info.state == ProcessState.RUNNING:
-        move_to_done(curr_proc_info, ProcessState.RUNNING)
+        transition_to_done(curr_proc_info, ProcessState.RUNNING)
         scheduler_state = next_proc(scheduler_state)
     return scheduler_state
 
-def run(scheduler_state: SchedulerState) -> Tuple[int, int, int]:
+
+# based on config
+def handle_process_switching(scheduler_state: SchedulerState, pid: int, scheduler_config: SchedulerConfig) -> SchedulerState:
+    # immediate switching post termination.
+    # ImmediateSwitch && ~(pid = curr_proc) so pid isn't currently active &&  curr_proc.state == Running
+    if scheduler_config.io_done_behavior == IORunPolicy.IMMEDIATE and scheduler_state.curr_proc != pid and get_current_proc_info(scheduler_state).state == ProcessState.RUNNING:
+        # pid state transition (Running -> Ready)
+        scheduler_state = transition_to_ready(get_proc_info_by_pid(pid, scheduler_state), ProcessState.RUNNING)
+    else:
+        # IO_RUN_LATER
+        if scheduler_config.process_switch_behavior == SchedulerSwitchPolicy.ON_END:
+            scheduler_state = next_proc(scheduler_state, pid)
+        if get_num_runnable(scheduler_state) == 1:
+            scheduler_state = next_proc(scheduler_state, pid)
+
+
+        
+# single tick event driven transition for a single process
+def handle_process_step(scheduler_state: SchedulerState, pid: int, scheduler_config: SchedulerConfig) -> SchedulerState:
+    # resolve IO
+    if scheduler_state.clock_tick in scheduler_state.io_finish_times[pid]:
+        # if IO finishing now (pid, BLOCKED)-> (pid, READY)
+        scheduler_state = transition_to_ready(get_proc_info_by_pid(scheduler_state, pid), ProcessState.BLOCKED)
+        handle_process_switching(scheduler_state, pid, scheduler_config)
+        resolve_done(scheduler_state)
+
+def handle_scheduler_step(scheduler_state: SchedulerState, scheduler_stats: SchedulerStatistics, scheduler_config: SchedulerConfig) -> Tuple[SchedulerState, SchedulerStatistics]:
+    # increment clock tick.
+    scheduler_state.clock_tick += 1
+    # this is io done in the last cycle
+    scheduler_state.io_done = False
+    for pid in range(get_num_processes(scheduler_state)):
+        scheduler_state = handle_process_step(scheduler_state, pid) 
+
     
+    
+
+def run(scheduler_state: SchedulerState, scheduler_config: SchedulerConfig) -> Tuple[int, int, int]:
     # base case no processors
     if len(scheduler_state.proc_info) == 0:
         return
     
     # inductive case:
+    scheduler_stats = new_scheduler_statistics()
+    # iterate until all processes finish 
+    while scheduler_state.get_num_active() > 0:
+        scheduler_state, scheduler_stats = handle_scheduler_step(scheduler_state, scheduler_stats, scheduler_config)
 
-        
+
     
+
+
 
 def main() -> None:
     args = sys.argv[1:]
     options, parsed_args = parse(args)
     random_seed(options.seed) #not very functional but eh. 
+
+    
 
     # free monoid of process specifications.
     scheduler_state = new_scheduler_state()
