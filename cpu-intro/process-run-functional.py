@@ -69,7 +69,7 @@ DO_IO_DONE = 'io_done'
 class SchedulerState:
     proc_info: Dict[int, ProcessInfo]
     curr_proc: int
-    io_finish_times: Dict[int, int]
+    io_finish_times: Dict[int, List[int]]
     clock_tick: int
     process_switch_behavior: str
     io_done_behavior: str
@@ -108,6 +108,9 @@ def new_process(scheduler_state: SchedulerState) -> Tuple[SchedulerState, int]:
     scheduler_state.proc_info[proc_id].pid = proc_id
     scheduler_state.proc_info[proc_id].code = []
     scheduler_state.proc_info[proc_id].state = ProcessState.READY
+
+    #corresponding upper layer, although ownership is subjective
+    scheduler_state.io_finish_times[proc_id] = []
     return scheduler_state, proc_id
 
 
@@ -196,7 +199,39 @@ def get_num_processes(scheduler_state: SchedulerState) -> int:
 def get_num_instructions(scheduler_state: SchedulerState, pid: int) -> int:
     return len(scheduler_state.proc_info[pid].code)
 
+def get_instruction(scheduler_state: SchedulerState, pid: int, index: int) -> int:
+    return scheduler_state.proc_info[pid].code[index]
 
+def get_num_active(scheduler_state: SchedulerState) -> int:
+    # find the number of processes with state ~(DONE) = BLOCKED | READY | RUNNING
+    num_active = 0
+    for pid in range(len(scheduler_state.proc_info)):
+        if scheduler_state.proc_info[pid].state != ProcessState.DONE:
+            num_active += 1
+    return num_active
+
+def get_num_runnable(scheduler_state: SchedulerState) -> int:
+    # Find the number of states which can transition into runnable
+    # COUNT(READY | RUNNING)
+    num_active = 0
+    for pid in range(len(scheduler_state.proc_info)):
+        if scheduler_state.proc_info[pid].state == ProcessState.READY or \
+                scheduler_state.proc_info[pid].state == ProcessState.RUNNING:
+            num_active += 1
+    return num_active
+
+def get_ios_in_flight(scheduler_state: SchedulerState, current_time: int) -> int:
+    # count(outbound IOs) which haven't been finished
+    num_in_flight = 0
+    for pid in range(len(scheduler_state.proc_info)):
+        for t in scheduler_state.io_finish_times[pid]:
+            if t > current_time:
+                num_in_flight += 1
+    return num_in_flight
+
+def space(num_columns) -> None:
+    for _ in range(num_columns):
+        print('%10s' % ' ', end='')
 
 def next_proc(scheduler_state: SchedulerState, pid: int = -1) -> SchedulerState:
     # init case, no process id: 
@@ -221,13 +256,25 @@ def next_proc(scheduler_state: SchedulerState, pid: int = -1) -> SchedulerState:
             proc_info = get_current_proc_info(scheduler_state)
             new_proc_info = move_to_running(proc_info, ProcessState.READY)
             return set_proc_info_by_pid(pid, new_proc_info, scheduler_state)
-        
 
-            
+#formally effectful
+def resolve_done(scheduler_state: SchedulerState) -> SchedulerState:
+    curr_proc_info = get_current_proc_info(scheduler_state)
+    # take if (curr_proc.state) == running  then (curr_proc.state) = done
+    if len(curr_proc_info.code) == 0 and curr_proc_info.state == ProcessState.RUNNING:
+        move_to_done(curr_proc_info, ProcessState.RUNNING)
+        scheduler_state = next_proc(scheduler_state)
+    return scheduler_state
+
+def run(scheduler_state: SchedulerState) -> Tuple[int, int, int]:
     
+    # base case no processors
+    if len(scheduler_state.proc_info) == 0:
+        return
+    
+    # inductive case:
 
-
-
+        
     
 
 def main() -> None:
@@ -236,13 +283,14 @@ def main() -> None:
     random_seed(options.seed) #not very functional but eh. 
 
     # free monoid of process specifications.
+    scheduler_state = new_scheduler_state()
     if options.program != '':
         for p in options.program.split(':'):
-            scheduler_state = load_program(p)
+            scheduler_state = load_program(p, scheduler_state)
     else:
         # example process description (10:100,10:100)
         for p in options.process_list.split(','):
-            scheduler_state = load(p)
+            scheduler_state = load(p, scheduler_state)
         
     (cpu_busy, io_busy, clock_tick) = run(scheduler_state)
 
