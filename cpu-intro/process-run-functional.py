@@ -1,10 +1,10 @@
 
 from __future__ import print_function
-from pickle import PERSID
+# from pickle import PERSID
 import sys
 from optparse import OptionParser
 import random
-from enum import Enum, auto
+from enum import Enum, auto, nonmember
 from dataclasses import dataclass, replace
 from typing import Dict, List, Tuple
 
@@ -81,7 +81,7 @@ class ProcessState(Enum):
 class ProcessInfo:
     pid: int
     pc: int
-    code: Tuple[str, ...]      # tuple, not list -> actually immutable
+    code: Tuple[str, ...]      # tuple, not list -> actually mutable
     state: ProcessState
 
 @dataclass(frozen=True)
@@ -280,7 +280,7 @@ def set_curr_proc_info(curr_proc_info: ProcessInfo, scheduler_state: SchedulerSt
 
 
 # Update current active process for next time step.
-# (curr_proc x ( | ) )
+# (curr_proc x  )
 def next_proc(scheduler_state: SchedulerState, pid: int = -1) -> SchedulerState:
     # init case, no process id: 
     if pid != -1:
@@ -316,9 +316,8 @@ def resolve_instructions_done(scheduler_state: SchedulerState) -> SchedulerState
     return scheduler_state
 
 
-# no state mutation
-def emit_scheduler_metrics_and_tick(scheduler_state: SchedulerState, instruction_to_execute: Instruction) -> None:
-
+# no state mutation just emit 
+def emit_scheduler_state_per_tick(scheduler_state: SchedulerState, curr_instruction: Instruction) -> None:
     # Show tick
     if scheduler_state.io_done:
         print('%3d*' % scheduler_state.clock_tick, end='')
@@ -330,23 +329,25 @@ def emit_scheduler_metrics_and_tick(scheduler_state: SchedulerState, instruction
     # Case current process -> Show instruction excuted
     # Case not active process -> Show state
     for pid in range(get_num_processes(scheduler_state)):
-        if pid == scheduler_state.curr_proc and instruction_to_execute != '':
-            print('%14s' % ('RUN:'+instruction_to_execute), end='')
+        if pid == scheduler_state.curr_proc and curr_instruction != '':
+            print('%14s' % ('RUN:'+curr_instruction), end='')
         else:
             print('%14s' % (get_proc_info_by_pid(pid, scheduler_state).state), end='')
-    
 
-
+def emit_header(scheduler_state: SchedulerState) -> None:
+    print('%s' % 'Time', end='')
+    for pid in range(get_num_processes(scheduler_state)):
+        print('%14s' % ('PID:%2d' % pid), end='')
+    print('%14s%14s' % ('CPU', 'IOs'))
     
-    
-  
 # Policies based on config.
 # Match (IORunPolicy x Pid x Curr_proc.ProcessState (fixed) x Pid.code == IO_DONE (fixed)) in the context.
-# (Immediate x (Pid != Curr_proc) x RUNNING x (Pid.code == IO_DONE)) -> 
-# 
+# (Immediate x (Pid != Curr_proc) x RUNNING x (Pid.code == IO_DONE)) -> (Immediate x (Pid != Curr_proc) x READY x (Pid.code == IO_DONE))
+
 def handle_io_done_process_switching(scheduler_state: SchedulerState, pid: int, scheduler_config: SchedulerConfig) -> SchedulerState:
     # immediate switching post termination.
     # ImmediateSwitch && ~(pid = curr_proc) so pid isn't currently active &&  curr_proc.state == Running
+
     if scheduler_config.io_done_behavior == IORunPolicy.IMMEDIATE and scheduler_state.curr_proc != pid and get_current_proc_info(scheduler_state).state == ProcessState.RUNNING:
         # pid state transition (Running -> Ready)
         new_proc_info = transition_to_ready(get_proc_info_by_pid(pid, scheduler_state), ProcessState.RUNNING)
@@ -371,6 +372,21 @@ def resolve_io_done(scheduler_state: SchedulerState, pid: int, scheduler_config:
         scheduler_state = handle_io_done_process_switching(scheduler_state, pid, scheduler_config)
         resolve_instructions_done(scheduler_state)
 
+
+def emit_instruction(curr_instruction: Instruction) -> None:
+    # CPU output here: if no instruction executes, output a space, otherwise a 1
+    if curr_instruction == "":
+        print("%14s" % " ", end="")
+    elif curr_instruction == "COMPUTE":
+        print("%14s" % "1", end="")
+
+def emit_outstanding_ios(num_outstanding: int) -> None:
+    if num_outstanding > 0:
+        print("%14s" % str(num_outstanding), end="")
+    else:
+        print("%10s" % " ", end="")
+    print()
+
 def handle_execute_instructions(scheduler_state: SchedulerState, scheduler_metrics: SchedulerMetrics) -> Tuple[SchedulerState, SchedulerMetrics, Instruction]:
     # if current proc is RUNNING and has an instruction, execute it
     # if (state, code) ∈ RUNNING × (Instruction × Code*):
@@ -378,26 +394,27 @@ def handle_execute_instructions(scheduler_state: SchedulerState, scheduler_metri
     # otherwise:
     #     identity transition
 
-    instruction_to_execute = ''
+    curr_instruction = ''
     curr_proc_info = get_current_proc_info(scheduler_state)
     # (Running,c::C) --> (Running,C,c)
     # RUNNING × (Instruction × Code*)
     #     --> RUNNING × Code* × Instruction
     if curr_proc_info.state == ProcessState.RUNNING and len(curr_proc_info.code) > 0:
-        instruction_to_execute = curr_proc_info.code.pop(0)
+        curr_instruction = curr_proc_info.code.pop(0)
         scheduler_state= set_curr_proc_info(curr_proc_info=curr_proc_info, scheduler_state=scheduler_state)
         scheduler_metrics.cpu_busy +=1 
     
-    return scheduler_state, scheduler_metrics, instruction_to_execute
+    
+    return scheduler_state, scheduler_metrics, curr_instruction
 
-# (Current pid x RUNNING x IO) in (Pid x ProcessState x Instruction) -> (BLOCKED, IO)
+# (Current pid x RUNNING x IO) in (Pid x ProcessState x Instruction) -> (curr_pid x BLOCKED x IO)
 def handle_io_issue(
     scheduler_state: SchedulerState,
     scheduler_config: SchedulerConfig,
-    instruction_to_execute: Instruction,
+    curr_instruction: Instruction,
 ) -> SchedulerState:
     # guarded identity: only acts when the instruction just popped was IO
-    if instruction_to_execute != Instruction.IO:
+    if curr_instruction != Instruction.IO:
         return scheduler_state
 
     
@@ -416,27 +433,55 @@ def handle_io_issue(
         scheduler_state = next_proc(scheduler_state)
 
 
+# update cpu / io counts based on instruction_executed
+# Match (Instruction x cpu_busy (int), io_busy (int)) 
+# (CPU x cpu_busy x io_busy) -> (CPU x cpu_busy + 1 x io_busy)
+# (IO x cpu_busy x io_busy) -> (CPU x cpu_busy x io_busy + 1)
+def accumulate_metrics(
+    scheduler_state: SchedulerState,
+    scheduler_metrics: SchedulerMetrics,
+    instruction_executed: Instruction,
+    num_io_outstanding: int,
+) -> SchedulerMetrics:
+    cpu_delta = 1 if instruction_executed != '' else 0
+    io_delta = 1 if num_io_outstanding > 0 else 0
+
+    return replace(
+        scheduler_metrics,
+        cpu_busy=scheduler_metrics.cpu_busy + cpu_delta,
+        io_busy=scheduler_metrics.io_busy + io_delta,
+    )
 
 
 
 def handle_scheduler_step(scheduler_state: SchedulerState, scheduler_metrics: SchedulerMetrics, scheduler_config: SchedulerConfig) -> Tuple[SchedulerState, SchedulerMetrics]:
     # increment clock tick.
     scheduler_state.clock_tick += 1
+
     # this is io done in the last cycle
     scheduler_state.io_done = False
     for pid in range(get_num_processes(scheduler_state)):
         scheduler_state = resolve_io_done(scheduler_state, pid, scheduler_config)
     
-    scheduler_state, scheduler_metrics, instruction_to_execute = handle_execute_instructions(scheduler_state, scheduler_metrics)
-    scheduler_state = handle_io_issue(scheduler_state, scheduler_config, instruction_to_execute)
-
-    return scheduler_state
+    # Handle Curr Proc step
+    scheduler_state, scheduler_metrics, curr_instruction = handle_execute_instructions(scheduler_state, scheduler_metrics)
+    scheduler_state = handle_io_issue(scheduler_state, scheduler_config, curr_instruction)
+    scheduler_state = resolve_instructions_done(scheduler_state)
+    num_io_outstanding = get_ios_in_flight(scheduler_state, scheduler_state.clock_tick)
+    emit_scheduler_state_per_tick(scheduler_state, curr_instruction)
+    emit_instruction(curr_instruction)
+    emit_outstanding_ios(num_io_outstanding)
+    scheduler_metrics = accumulate_metrics(scheduler_state, scheduler_metrics, curr_instruction, num_io_outstanding)
+    return scheduler_state,
 
     
 def run(scheduler_state: SchedulerState, scheduler_config: SchedulerConfig) -> Tuple[int, int, int]:
     # base case no processors
-    if len(scheduler_state.proc_info) == 0:
-        return
+    if get_num_processes(scheduler_state) == 0:
+        return (0, 0, 0)
+    
+    emit_header(scheduler_state)
+
     
     # inductive case:
     scheduler_metrics = new_scheduler_statistics()
@@ -453,8 +498,6 @@ def main() -> None:
     options, parsed_args = parse(args)
     random_seed(options.seed) #not very functional but eh. 
 
-    
-
     # free monoid of process specifications.
     scheduler_state = new_scheduler_state()
     scheduler_config = new_scheduler_config_from_options(options)
@@ -468,9 +511,6 @@ def main() -> None:
         
     (cpu_busy, io_busy, clock_tick) = run(scheduler_state, scheduler_config)
 
-
-
-    
     if options.print_metrics:
         print('')
         print('metrics: Total Time %d' % clock_tick)
