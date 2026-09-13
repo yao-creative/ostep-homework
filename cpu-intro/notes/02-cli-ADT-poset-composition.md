@@ -144,7 +144,7 @@ The program has **two ways to specify processes**:
 The code explicitly chooses between these two sources:
 
 ```python
-if options.program != '':
+if options.program != "":
     ...
 else:
     ...

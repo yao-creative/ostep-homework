@@ -22,9 +22,10 @@ So the precise statement isn't "policy is static, behavior is its runtime realiz
 ## Why your naming convention is already correct under this reading
 
 ```python
-class SchedulerSwitchPolicy(Enum):   # the type P — closed, static
+class SchedulerSwitchPolicy(Enum):  # the type P — closed, static
     ON_IO = auto()
     ON_END = auto()
+
 
 # field holding the chosen term, i.e. the behavior
 process_switch_behavior: SchedulerSwitchPolicy

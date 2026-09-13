@@ -185,7 +185,7 @@ Refcounting alone cannot free this:
 ```python
 a = Obj("A")
 a.peer = Obj("B")
-a.peer.peer = a        # A -> B -> A
+a.peer.peer = a  # A -> B -> A
 del a
 ```
 
@@ -269,44 +269,51 @@ Only **container** objects are tracked by the GC. A plain `int`, `str`, `bytes`,
 ```python
 import sys, gc
 
+
 class Obj:
     __slots__ = ("name", "peer")
+
     def __init__(self, name):
         self.name = name
         self.peer = None
+
     def __repr__(self):
         return f"Obj({self.name!r})"
+
 
 def rc(o):
     # sys.getrefcount's own arg = 1 hidden ref
     # rc()'s parameter `o`     = 1 hidden ref
     return sys.getrefcount(o) - 2
 
+
 print("--- reference counting --------------------")
 a = Obj("A")
-print(f"a = Obj('A')       rc(a) = {rc(a)}")   # 1
+print(f"a = Obj('A')       rc(a) = {rc(a)}")  # 1
 b = a
-print(f"b = a              rc(a) = {rc(a)}")   # 2
+print(f"b = a              rc(a) = {rc(a)}")  # 2
 c = [a, a]
-print(f"c = [a, a]         rc(a) = {rc(a)}")   # 4
+print(f"c = [a, a]         rc(a) = {rc(a)}")  # 4
 del b
-print(f"del b              rc(a) = {rc(a)}")   # 3
+print(f"del b              rc(a) = {rc(a)}")  # 3
 del c
-print(f"del c              rc(a) = {rc(a)}")   # 1
+print(f"del c              rc(a) = {rc(a)}")  # 1
 
 print("\n--- reference cycles ----------------------")
 a.peer = Obj("B")
 a.peer.peer = a
-print(f"cycle formed       rc(a) = {rc(a)}")   # 2
+print(f"cycle formed       rc(a) = {rc(a)}")  # 2
 print(f"gc count={gc.get_count()}  thresholds={gc.get_threshold()}")
 del a
 gc.collect()
 print("del a + gc.collect() -> cycle A<->B reclaimed")
 
 print("\n--- cached / interned objects -------------")
-x = 256; y = 256
-print(f"256 is 256              -> {x is y}")   # True
-s1 = "hello"; s2 = "hello"
+x = 256
+y = 256
+print(f"256 is 256              -> {x is y}")  # True
+s1 = "hello"
+s2 = "hello"
 print(f"'hello' is 'hello'      -> {s1 is s2}")  # True
 
 print("\n--- allocation counters -------------------")
@@ -339,7 +346,7 @@ import tracemalloc
 tracemalloc.start()
 snap1 = tracemalloc.take_snapshot()
 
-data = [bytearray(1000) for _ in range(1000)]     # ~1 MB
+data = [bytearray(1000) for _ in range(1000)]  # ~1 MB
 
 snap2 = tracemalloc.take_snapshot()
 for stat in snap2.compare_to(snap1, "lineno")[:3]:

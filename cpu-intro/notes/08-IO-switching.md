@@ -171,9 +171,7 @@ $$
 Then:
 
 ```python
-self.io_finish_times[self.curr_proc].append(
-    clock_tick + self.io_length + 1
-)
+self.io_finish_times[self.curr_proc].append(clock_tick + self.io_length + 1)
 ```
 
 and, crucially:
@@ -372,8 +370,7 @@ This is more subtle.
 The code instead checks:
 
 ```python
-if self.process_switch_behavior == SCHED_SWITCH_ON_END \
-        and self.get_num_runnable() > 1:
+if self.process_switch_behavior == SCHED_SWITCH_ON_END and self.get_num_runnable() > 1:
     self.next_proc(pid)
 
 if self.get_num_runnable() == 1:

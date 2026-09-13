@@ -51,7 +51,9 @@ def handle_io_issue(
     scheduler_state = set_proc_info_by_pid(pid, new_proc_info, scheduler_state)
 
     finish_tick = scheduler_state.clock_tick + scheduler_config.io_length + 1
-    scheduler_state.io_finish_times[pid] = scheduler_state.io_finish_times[pid] + [finish_tick]
+    scheduler_state.io_finish_times[pid] = scheduler_state.io_finish_times[pid] + [
+        finish_tick
+    ]
 
     if scheduler_config.process_switch_policy == SchedulerSwitchPolicy.ON_IO:
         scheduler_state = next_proc(scheduler_state)
@@ -67,8 +69,10 @@ def accumulate_metrics(
     scheduler_metrics: SchedulerMetrics,
     instruction_executed: Instruction,
 ) -> SchedulerMetrics:
-    cpu_delta = 1 if instruction_executed != '' else 0
-    io_delta = 1 if get_ios_in_flight(scheduler_state, scheduler_state.clock_tick) > 0 else 0
+    cpu_delta = 1 if instruction_executed != "" else 0
+    io_delta = (
+        1 if get_ios_in_flight(scheduler_state, scheduler_state.clock_tick) > 0 else 0
+    )
     return replace(
         scheduler_metrics,
         cpu_busy=scheduler_metrics.cpu_busy + cpu_delta,
@@ -81,10 +85,10 @@ def accumulate_metrics(
 
 ```python
 def emit_header(scheduler_state: SchedulerState) -> None:
-    print('%s' % 'Time', end='')
+    print("%s" % "Time", end="")
     for pid in range(get_num_processes(scheduler_state)):
-        print('%14s' % ('PID:%2d' % pid), end='')
-    print('%14s%14s' % ('CPU', 'IOs'))
+        print("%14s" % ("PID:%2d" % pid), end="")
+    print("%14s%14s" % ("CPU", "IOs"))
 ```
 
 **4. `handle_scheduler_step`, corrected to actually be the composed pipe** (currently it only calls `handle_process_step` per pid and never calls execute/issue/accumulate/emit at all):
@@ -95,12 +99,16 @@ def handle_scheduler_step(
     scheduler_metrics: SchedulerMetrics,
     scheduler_config: SchedulerConfig,
 ) -> Tuple[SchedulerState, SchedulerMetrics]:
-    scheduler_state = replace(scheduler_state, clock_tick=scheduler_state.clock_tick + 1, io_done=False)
+    scheduler_state = replace(
+        scheduler_state, clock_tick=scheduler_state.clock_tick + 1, io_done=False
+    )
 
     for pid in range(get_num_processes(scheduler_state)):
         scheduler_state = handle_process_step(scheduler_state, pid, scheduler_config)
 
-    scheduler_state, scheduler_metrics, instr = handle_execute_instructions(scheduler_state, scheduler_metrics)
+    scheduler_state, scheduler_metrics, instr = handle_execute_instructions(
+        scheduler_state, scheduler_metrics
+    )
     scheduler_state = handle_io_issue(scheduler_state, scheduler_config, instr)
     scheduler_state = resolve_done(scheduler_state)
     scheduler_metrics = accumulate_metrics(scheduler_state, scheduler_metrics, instr)
@@ -114,18 +122,28 @@ This also forces two prior fixes into place as *prerequisites*, not afterthought
 **5. `run()`, folding rather than looping-with-forgotten-returns:**
 
 ```python
-def run(scheduler_state: SchedulerState, scheduler_config: SchedulerConfig) -> Tuple[int, int, int]:
+def run(
+    scheduler_state: SchedulerState, scheduler_config: SchedulerConfig
+) -> Tuple[int, int, int]:
     if get_num_processes(scheduler_state) == 0:
         return (0, 0, 0)
 
-    scheduler_state = next_proc(scheduler_state, pid=0)  # doc2's initial move_to_running(READY)
+    scheduler_state = next_proc(
+        scheduler_state, pid=0
+    )  # doc2's initial move_to_running(READY)
     emit_header(scheduler_state)
     scheduler_metrics = new_scheduler_statistics()
 
     while get_num_active(scheduler_state) > 0:
-        scheduler_state, scheduler_metrics = handle_scheduler_step(scheduler_state, scheduler_metrics, scheduler_config)
+        scheduler_state, scheduler_metrics = handle_scheduler_step(
+            scheduler_state, scheduler_metrics, scheduler_config
+        )
 
-    return (scheduler_metrics.cpu_busy, scheduler_metrics.io_busy, scheduler_state.clock_tick)
+    return (
+        scheduler_metrics.cpu_busy,
+        scheduler_metrics.io_busy,
+        scheduler_state.clock_tick,
+    )
 ```
 
 ## What this doesn't fix yet

@@ -54,6 +54,7 @@ class SchedulerConfig:
     io_done_behavior: str
     io_length: int
 
+
 @dataclass
 class SchedulerState:
     proc_info: Dict[int, ProcessInfo]
@@ -61,6 +62,7 @@ class SchedulerState:
     io_finish_times: Dict[int, List[int]]
     clock_tick: int
     io_done: bool
+
 
 def step(config: SchedulerConfig, state: SchedulerState) -> SchedulerState: ...
 ```

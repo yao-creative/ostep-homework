@@ -17,7 +17,9 @@ None of this is fixable by "polishing" — it means the module was never run aft
 This is the real architectural finding, and it's the same bug pattern repeated ~5 times: you correctly modeled `transition_to_running` etc. as **pure functions returning a new immutable value** (`replace(p, state=...)` — good, this is the right primitive), but at every call site the *result is either discarded or misassigned to the wrong variable*:
 
 ```python
-scheduler_state = transition_to_ready(get_proc_info_by_pid(pid, scheduler_state), ProcessState.RUNNING)
+scheduler_state = transition_to_ready(
+    get_proc_info_by_pid(pid, scheduler_state), ProcessState.RUNNING
+)
 ```
 This rebinds `scheduler_state` (a `SchedulerState`) to a `ProcessInfo` — the write-back step (`set_proc_info_by_pid`) is missing. Same shape of bug in `handle_process_switching`, `handle_process_step`, and `resolve_done` (which computes `transition_to_done(...)` and throws the result away entirely, then proceeds as if the mutation happened — a holdover from doc2's mutate-`self` mental model).
 

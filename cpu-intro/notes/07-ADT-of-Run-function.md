@@ -24,7 +24,7 @@ In the code these are:
 ```python
 STATE_RUNNING
 STATE_READY
-STATE_WAIT      # value is 'BLOCKED'
+STATE_WAIT  # value is 'BLOCKED'
 STATE_DONE
 ```
 

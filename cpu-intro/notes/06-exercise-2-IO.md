@@ -50,9 +50,7 @@ The code then does:
 
 ```python
 self.move_to_wait(STATE_RUNNING)
-self.io_finish_times[self.curr_proc].append(
-    clock_tick + self.io_length + 1
-)
+self.io_finish_times[self.curr_proc].append(clock_tick + self.io_length + 1)
 ```
 
 
