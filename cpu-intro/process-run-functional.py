@@ -38,8 +38,8 @@ class IORunPolicy(Enum):
     IMMEDIATE = auto()
 
 class SchedulerSwitchPolicy(Enum):
-    ON_IO = auto()
-    ON_END = auto()
+    ON_IO = auto()  # IO_ISSUE Trigger
+    ON_END = auto() # IO_DONE Trigger 
 
 
 # Actions/ states within the process.
@@ -355,7 +355,7 @@ def emit_header(scheduler_state: SchedulerState) -> None:
 
 def handle_io_done_process_switching(scheduler_state: SchedulerState, pid: int, scheduler_config: SchedulerConfig) -> SchedulerState:
 
-    # Policy lexicographic ordering on IORunPolicy.IMMEDIATE> SchedulerSwitchPolicy.END
+    # Policy lexicographic ordering on IORunPolicy.IMMEDIATE > SchedulerSwitchPolicy.END
     # immediate switching post termination.
     if scheduler_config.io_done_policy == IORunPolicy.IMMEDIATE:
         # Partition:
@@ -464,7 +464,6 @@ def handle_io_issue(
 # (CPU x cpu_busy x io_busy) -> (CPU x cpu_busy + 1 x io_busy)
 # (IO x cpu_busy x io_busy) -> (CPU x cpu_busy x io_busy + 1)
 def accumulate_metrics(
-    scheduler_state: SchedulerState,
     scheduler_metrics: SchedulerMetrics,
     instruction_executed: Instruction,
     num_io_outstanding: int,
@@ -503,7 +502,7 @@ def handle_scheduler_step(scheduler_state: SchedulerState, scheduler_metrics: Sc
     emit_scheduler_state_per_tick(scheduler_state, curr_instruction)
     emit_instruction(curr_instruction)
     emit_outstanding_ios(num_io_outstanding)
-    scheduler_metrics = accumulate_metrics(scheduler_state, scheduler_metrics, curr_instruction, num_io_outstanding)
+    scheduler_metrics = accumulate_metrics(scheduler_metrics, curr_instruction, num_io_outstanding)
 
     # EPILOGUE — commit this dispatch's consequences, visible starting next tick
     # issuing for next cycle:
