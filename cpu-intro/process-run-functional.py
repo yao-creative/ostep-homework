@@ -135,6 +135,9 @@ def new_scheduler_statistics() -> SchedulerMetrics:
 
 # Options -> Schedulerconfig
 def new_scheduler_config_from_options(options):
+    # just for my code version
+    switch_name = options.process_switch_behavior.removeprefix('SWITCH_')   # 'SWITCH_ON_IO' -> 'ON_IO'
+    io_done_name = options.io_done_behavior.removeprefix('IO_RUN_')          # 'IO_RUN_LATER' -> 'LATER'
     return SchedulerConfig(
         process_switch_behavior=SchedulerSwitchPolicy(options.process_switch_behavior),
         io_done_behavior=IORunPolicy(options.io_done_behavior),
@@ -144,11 +147,12 @@ def new_scheduler_config_from_options(options):
 # modify in place 
 def new_process(scheduler_state: SchedulerState) -> Tuple[SchedulerState, int]:
     proc_id = len(scheduler_state.proc_info)
-    scheduler_state.proc_info[proc_id] = {}
-    scheduler_state.proc_info[proc_id].pc = 0
-    scheduler_state.proc_info[proc_id].pid = proc_id
-    scheduler_state.proc_info[proc_id].code = []
-    scheduler_state.proc_info[proc_id].state = ProcessState.READY
+    scheduler_state.proc_info[proc_id] = ProcessInfo(
+        pid=proc_id,
+        pc=0,
+        code=[],
+        state=ProcessState.READY
+    )
 
     #corresponding upper layer, although ownership is subjective
     scheduler_state.io_finish_times[proc_id] = []
@@ -290,7 +294,9 @@ def next_proc(scheduler_state: SchedulerState, pid: int = -1) -> SchedulerState:
         return set_proc_info_by_pid(pid, new_proc_info, scheduler_state)
     
 
-    # Constructor first priority process and transition it to running 
+    # inductive case first priority process and transition it to running
+    # operates on round robin
+    # k + 1 -> n 
     for pid in range(scheduler_state.curr_proc + 1, get_num_processes(scheduler_state)):
         if get_proc_info_by_pid(pid, scheduler_state).state == ProcessState.READY:
             scheduler_state.curr_proc = pid
@@ -298,9 +304,9 @@ def next_proc(scheduler_state: SchedulerState, pid: int = -1) -> SchedulerState:
             new_proc_info = transition_to_running(proc_info, ProcessState.READY)
             return set_proc_info_by_pid(pid, new_proc_info, scheduler_state) 
     
+    # 0 -> k + 1
     for pid in range(0, scheduler_state.curr_proc + 1):
-        if proc_info[pid].state == ProcessState.READY:
-            scheduler_state.curr_proc = pid 
+        if get_proc_info_by_pid(pid, scheduler_state).state == ProcessState.READY:
             proc_info = get_current_proc_info(scheduler_state)
             new_proc_info = transition_to_running(proc_info, ProcessState.READY)
             return set_proc_info_by_pid(pid, new_proc_info, scheduler_state)
@@ -309,9 +315,9 @@ def next_proc(scheduler_state: SchedulerState, pid: int = -1) -> SchedulerState:
 
 def resolve_instructions_done(scheduler_state: SchedulerState) -> SchedulerState:
     curr_proc_info = get_current_proc_info(scheduler_state)
-    # take if (curr_proc.state) == running  then (curr_proc.state) = done
     if len(curr_proc_info.code) == 0 and curr_proc_info.state == ProcessState.RUNNING:
-        transition_to_done(curr_proc_info, ProcessState.RUNNING)
+        new_proc_info = transition_to_done(curr_proc_info, ProcessState.RUNNING)
+        scheduler_state = set_proc_info_by_pid(scheduler_state.curr_proc, new_proc_info, scheduler_state)
         scheduler_state = next_proc(scheduler_state)
     return scheduler_state
 
@@ -330,7 +336,7 @@ def emit_scheduler_state_per_tick(scheduler_state: SchedulerState, curr_instruct
     # Case not active process -> Show state
     for pid in range(get_num_processes(scheduler_state)):
         if pid == scheduler_state.curr_proc and curr_instruction != '':
-            print('%14s' % ('RUN:'+curr_instruction), end='')
+            print('%14s' % ('RUN:'+curr_instruction.name), end='')
         else:
             print('%14s' % (get_proc_info_by_pid(pid, scheduler_state).state), end='')
 
@@ -348,12 +354,10 @@ def handle_io_done_process_switching(scheduler_state: SchedulerState, pid: int, 
     # immediate switching post termination.
     # ImmediateSwitch && ~(pid = curr_proc) so pid isn't currently active &&  curr_proc.state == Running
 
-    if scheduler_config.io_done_behavior == IORunPolicy.IMMEDIATE and scheduler_state.curr_proc != pid and get_current_proc_info(scheduler_state).state == ProcessState.RUNNING:
-        # pid state transition (Running -> Ready)
+    if scheduler_config.io_done_policy == IORunPolicy.IMMEDIATE and scheduler_state.curr_proc != pid and get_current_proc_info(scheduler_state).state == ProcessState.RUNNING:
         new_proc_info = transition_to_ready(get_proc_info_by_pid(pid, scheduler_state), ProcessState.RUNNING)
         scheduler_state = set_proc_info_by_pid(pid, new_proc_info, scheduler_state)
-        # IO_RUN_LATER -> SchedulerSwitchPolicy 
-        if scheduler_config.process_switch_behavior == SchedulerSwitchPolicy.ON_END:
+        if scheduler_config.process_switch_policy == SchedulerSwitchPolicy.ON_END:
             scheduler_state = next_proc(scheduler_state, pid)
         if get_num_runnable(scheduler_state) == 1:
             scheduler_state = next_proc(scheduler_state, pid)
@@ -364,20 +368,19 @@ def handle_io_done_process_switching(scheduler_state: SchedulerState, pid: int, 
 # for all pid : 
 # (pid x BLOCKED x (io_finish_time == clock_tick)) in (Pids (int) x ProcessState x IO_finish_time (int)) -> (pid x READY x io_finish_time) change only ready dim.
 def resolve_io_done(scheduler_state: SchedulerState, pid: int, scheduler_config: SchedulerConfig) -> SchedulerState:
-    # resolve IO
     if scheduler_state.clock_tick in scheduler_state.io_finish_times[pid]:
-        # if IO finishing now (pid, BLOCKED)-> (pid, READY)
-        new_proc_info = transition_to_ready(get_proc_info_by_pid(scheduler_state, pid), ProcessState.BLOCKED)
+        new_proc_info = transition_to_ready(get_proc_info_by_pid(pid, scheduler_state), ProcessState.BLOCKED)
         scheduler_state = set_proc_info_by_pid(pid, new_proc_info, scheduler_state)
         scheduler_state = handle_io_done_process_switching(scheduler_state, pid, scheduler_config)
-        resolve_instructions_done(scheduler_state)
+        scheduler_state = resolve_instructions_done(scheduler_state)
+    return scheduler_state
 
 
 def emit_instruction(curr_instruction: Instruction) -> None:
     # CPU output here: if no instruction executes, output a space, otherwise a 1
-    if curr_instruction == "":
+    if curr_instruction == '':
         print("%14s" % " ", end="")
-    elif curr_instruction == "COMPUTE":
+    elif curr_instruction == Instruction.COMPUTE:
         print("%14s" % "1", end="")
 
 def emit_outstanding_ios(num_outstanding: int) -> None:
@@ -431,7 +434,7 @@ def handle_io_issue(
     # Update to load next active 
     if scheduler_config.process_switch_policy == SchedulerSwitchPolicy.ON_IO:
         scheduler_state = next_proc(scheduler_state)
-
+    return scheduler_state
 
 # update cpu / io counts based on instruction_executed
 # Match (Instruction x cpu_busy (int), io_busy (int)) 
@@ -472,23 +475,16 @@ def handle_scheduler_step(scheduler_state: SchedulerState, scheduler_metrics: Sc
     emit_instruction(curr_instruction)
     emit_outstanding_ios(num_io_outstanding)
     scheduler_metrics = accumulate_metrics(scheduler_state, scheduler_metrics, curr_instruction, num_io_outstanding)
-    return scheduler_state,
-
+    return scheduler_state, scheduler_metrics
     
 def run(scheduler_state: SchedulerState, scheduler_config: SchedulerConfig) -> Tuple[int, int, int]:
-    # base case no processors
     if get_num_processes(scheduler_state) == 0:
         return (0, 0, 0)
-    
+    scheduler_state = next_proc(scheduler_state, pid=0)   # doc2's initial move_to_running(READY)
     emit_header(scheduler_state)
-
-    
-    # inductive case:
     scheduler_metrics = new_scheduler_statistics()
-    # iterate until all processes finish 
     while get_num_active(scheduler_state) > 0:
         scheduler_state, scheduler_metrics = handle_scheduler_step(scheduler_state, scheduler_metrics, scheduler_config)
-
     return (scheduler_metrics.cpu_busy, scheduler_metrics.io_busy, scheduler_state.clock_tick)
 
 
