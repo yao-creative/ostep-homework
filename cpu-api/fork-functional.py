@@ -4,8 +4,9 @@ import string
 from optparse import OptionParser
 import random
 import sys
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, NewType
 
+ProcessName = NewType("Process", str)
 #
 # to make Python2 and Python3 act the same -- how dumb
 # 
@@ -37,14 +38,14 @@ class ForkerConfig:
 
 @dataclass
 class ForkerState:
-    root_name: str
-    process_list: List[str]
-    children: Dict[str, List[str]]
-    parents: Dict[str, str]
-    name_length: int
-    base_names: str
-    curr_names: str
-    curr_index: int
+    root_name: ProcessName
+    process_list: List[ProcessName]
+    children: Dict[ProcessName, List[ProcessName]]
+    parents: Dict[ProcessName, ProcessName]
+    name_length: ProcessName
+    base_names: ProcessName
+    curr_names: ProcessName
+    curr_index: ProcessName
 
 
 def new_forker_state() -> ForkerState:
@@ -63,7 +64,7 @@ def parse(args: List[str]) -> Tuple[object, List[str]]:
     parser = OptionParser()
     parser.add_option('-s', '--seed', default=-1, help='the random seed', action='store', type='int', dest='seed')
     parser.add_option('-f', '--forks', default=0.7, help='percent of actions that are forks (not exits)', action='store', type='float', dest='fork_percentage')
-    parser.add_option('-A', '--action_list', default='', help='action list, instead of randomly generated ones (format: a+b,b+c,b- means a fork b, b fork c, b exit)', action='store', type='string', dest='action_list')
+    parser.add_option('-A', '--action_list_arg', default='', help='action list, instead of randomly generated ones (format: a+b,b+c,b- means a fork b, b fork c, b exit)', action='store', type='string', dest='action_list')
     parser.add_option('-a', '--actions', default=5, help='number of forks/exits to do', action='store', type='int', dest='actions')
     parser.add_option('-t', '--show_tree', help='show tree (not actions)', action='store_true', default=False, dest='show_tree')
     parser.add_option('-P', '--print_style', help='tree print style (basic, line1, line2, fancy)', action='store', type='string', default='fancy', dest='print_style')
@@ -71,7 +72,7 @@ def parse(args: List[str]) -> Tuple[object, List[str]]:
     parser.add_option('-L', '--leaf_only', help='only leaf processes exit', action='store_true', default=False, dest='leaf_only')
     parser.add_option('-R', '--local_reparent', help='reparent to local parent', action='store_true', default=False, dest='local_reparent')
     parser.add_option('-c', '--compute', help='compute answers for me', action='store_true', default=False, dest='solve')
-    (options, parsed_args) = parser.parse_args()
+    (options, parsed_args) = parser.parse_args(args)
     return options, parsed_args
 
 
@@ -79,7 +80,7 @@ def new_forker_config(options) -> ForkerConfig:
     return ForkerConfig(
         fork_percentage=options.fork_percentage,
         max_actions=options.actions,
-        action_list=options.action_list,
+        action_list_arg=options.action_list_arg,
         show_tree=options.show_tree,
         just_final=options.just_final,
         leaf_only=options.leaf_only,
@@ -93,7 +94,7 @@ def new_forker_config(options) -> ForkerConfig:
 # Partial function for each ancestor depth if the ancesstor has still undrawn siblings below it.
 # pmask[i]=True ⟺ a_i​ is not the last child of its own parent
 # the tree is printed level by level breadth first instead of depth first.
-def walk(forker_state: ForkerState, forker_config: ForkerConfig, curr_proc: str, level: int, pmask: Dict[int, bool], is_last: bool) -> None:
+def walk(forker_state: ForkerState, forker_config: ForkerConfig, curr_proc: ProcessName, level: int, pmask: Dict[int, bool], is_last: bool) -> None:
 
     # Pre spacing
     print('                               ', end='')
@@ -106,7 +107,7 @@ def walk(forker_state: ForkerState, forker_config: ForkerConfig, curr_proc: str,
             print('   ', end='')
         print('%2s' % curr_proc)
         for child in forker_state.children[curr_proc]:
-            walk(child, level + 1, {}, False)
+            walk(forker_state, forker_config, child, level + 1, {}, False)
         return
     elif forker_config.print_style == 'line1':
         chars = ('|', '-', '+', '|')
@@ -173,7 +174,7 @@ def grow_names(forker_state: ForkerState) -> ForkerState:
     forker_state.curr_index = 0
     return forker_state
 
-def get_name(forker_state: ForkerState) -> Tuple[str, ForkerState]:
+def get_name(forker_state: ForkerState) -> Tuple[ProcessName, ForkerState]:
     # maxed out names available
     # amortized name generation
     if forker_state.curr_index == len(forker_state.curr_names):
@@ -239,9 +240,19 @@ def handle_check_legal(action) ->  List[str]:
         handle_bad_action(action)
     return
 
+# State mutator
+def do_fork(forker_state: ForkerState, parent_proc: ProcessName, child_proc: ProcessName) -> Tuple[str|ForkerState]:
+    forker_state.process_list.append()
+    forker_state.children[child_proc] = []
+    forker_state.children[parent_proc].append(child_proc)
+    forker_state.parents[child_proc] = parent_proc
+    output = '%s forks %s' % (parent_proc, child_proc)
+    return output, forker_state
+
 
 def action_step(action: str, forker_config: ForkerConfig, forker_state: ForkerState) -> ForkerState:
-    handle_check_legal
+    handle_check_legal(action)
+    if 
 
 
 
@@ -253,7 +264,7 @@ def fold_action_list(action_list: List[str], forker_config: ForkerConfig, forker
 
 
 # effect of emitting into IO without return.
-def emit_tree(forker_config: ForkerConfig) -> None:
+def emit_tree(forker_config: ForkerConfig, forker_state: ForkerState) -> None:
     if forker_config.just_final:
         if forker_config.show_tree:
             print('\n                        Final Process Tree:')
@@ -274,11 +285,33 @@ def run(forker_config: ForkerConfig) -> None:
     print_tree(forker_state = forker_state, forker_config = forker_config)
     print('')
 
-    if forker_config.action_list != '':
+    if forker_config.action_list_arg != '':
         # Use given action list
-        action_list = forker_config.action_list.split(',')
+        action_list = forker_config.action_list_arg.split(',')
     else:
-        action_list = new_action_list()
+        action_list = new_action_list(forker_config = forker_config, forker_state = forker_state)
+
+    forker_state = fold_action_list(action_list, forker_config, forker_state)
+    
+    if forker_config.just_final:
+        if forker_config.show_tree:
+            print('\n                        Final Process Tree:')
+            print_tree(forker_state = forker_state, forker_config = forker_config)
+            print('')
+        else:
+            if forker_config.solve:
+                print('\n                        Final Process Tree:')
+                print_tree(forker_state = forker_state, forker_config = forker_config)
+                print('')
+            else:
+                print('\n                        Final Process Tree?\n')
+    return 
+
+
+
+        
+    
+
     
     
 
