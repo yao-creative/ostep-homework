@@ -195,7 +195,7 @@ class Forker:
         self.parents[p] = -1  # should never be used again
             
         # remove the entry for this proc from children
-        return '%s EXITS' % p
+        return 
 
     def bad_action(self, action):
         print('bad action (%s), must be X+Y or X- where X and Y are processes' % action)
