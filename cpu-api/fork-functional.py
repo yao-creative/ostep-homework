@@ -9,6 +9,20 @@ from typing import Dict, List, Tuple, NewType, Union
 Union[Fork, Exit]   # the coproduct: Action = Fork ⊎ Exit
 
 
+# Couple of things which my code more navigable: geometry, 
+# reducing the number of renaming of the same object in memory when they're all same reference
+
+# There's only to real things in software: state and time. code itself is also state loaded into interpreter/ compiler,
+# and it has a time dimension for which style is defined.
+
+# Optimal programs are minimal semantic complexity satisfying input x output coalgebra. (no aribtrary constraints which aren't semantic)
+# Don't confuse longer syntax or more precise syntax with "Semantic Complexity"
+# Being explicit => Better navigation and enforcing structure = compression like in information theory.
+# Programers are encoding when they write code and decoding when they read code. 
+# Optimality is optimization over the algebra encode x decode x logical_correctness x logical complexity. 
+# Correctness is by satisfication of the axiom of extensionality
+
+
 ProcessName = NewType("Process", str)
 
 # ADTs for the lexing of action tokens
@@ -24,6 +38,8 @@ class Exit:
 # All action Tokens:
 Action = Union[Fork, Exit]   # the coproduct: Action = Fork ⊎ Exit
 
+
+# Policies for 
 # Reparent Policy:
 class ReparentPolicy(Enum):
     LOCAL_TO_PARENT = auto()
@@ -33,10 +49,25 @@ class ReparentPolicy(Enum):
 class ExitNodePolicy(Enum):
     ANY_PROCESS_MAY_EXIT = auto()
     ONLY_LEAVES_MAY_EXIT = auto()
-    
-    
 
-#
+
+# Policies Telemetry 
+# --- Naming: orientation/canonical representative under the tree↔action duality ---
+class TelemetryBasis(Enum):
+    TREE = auto()
+    ACTION = auto()
+
+# --- Policy: governs the mechanism/display boundary (does not touch Q) ---
+class TelemetryRevealPolicy(Enum):
+    REVEAL = auto()
+    MASK = auto()
+
+# --- Hint: discardable without correctness loss; only affects observation cadence ---
+class TelemetryTimingPolicy(Enum):
+    PER_STEP = auto()   # scan
+    FINAL_ONLY = auto() # fold
+
+
 # to make Python2 and Python3 act the same -- how dumb
 # 
 def random_seed(seed):
@@ -52,13 +83,15 @@ def random_randint(low, hi):
 def random_choice(L):
     return L[random_randint(0, len(L)-1)]
 
+# Run time Immutable Initial Algebra.
 @dataclass(frozen=True)
 class ForkerConfig:
     fork_percentage: int
     max_actions: int
     action_list: str
-    show_tree: bool
-    just_final: bool
+    telemetry_reveal_policy: TelemetryRevealPolicy # TelemetryConfig
+    telemetry_timing_policy: TelemetryTimingPolicy # TelemetryConfig
+    telemetry_basis: TelemetryBasis # TelemetryConfig
     exit_node_policy: ExitNodePolicy
     reparent_policy: ReparentPolicy
     print_style: str
@@ -157,7 +190,6 @@ def lex_action_source(
         return [lex_raw_action(t) for t in tokens]
     else:
         return new_action_list(forker_config, forker_state)   # see retyped version below
-
 
 
 
@@ -328,7 +360,7 @@ def do_fork(forker_state: ForkerState, parent_proc: ProcessName, child_proc: Pro
     return fork_stimulation, forker_state
 
 # mechanism enforcing LOCAL_TO_PARENT reparent policy:
-def handle_LOCAL_TO_PARENT_reparent(forker_state: ForkerState, exit_parent: ProcessName, curr_proc: ProcessName) -> ForkerState:
+def handle_local_to_parent_reparent(forker_state: ForkerState, exit_parent: ProcessName, curr_proc: ProcessName) -> ForkerState:
     # TYPING of ABSTRACT_DATA_TYPE
     # ForkTree = (ProcessName + (ForkTree)*)
     # An instance of it looks like
@@ -348,7 +380,7 @@ def handle_LOCAL_TO_PARENT_reparent(forker_state: ForkerState, exit_parent: Proc
     return forker_state
 
 # mechanism enforcing GLOBAL_TO_PARENT_reparent policy:
-def handle_GLOBAL_TO_PARENT_reparent(forker_state: ForkerState, curr_proc: ProcessName):
+def handle_global_to_parent_reparent(forker_state: ForkerState, curr_proc: ProcessName):
     # Flatten(fork_tree(curr_proc) : ForkTree)
     descendents = collect_descendants(forker_state = forker_state, curr_proc = curr_proc)
     descendents.remove(curr_proc)
@@ -366,9 +398,9 @@ def resolve_reparent(forker_state: ForkerState, curr_proc: ProcessName, exit_par
     # LOCAL_TO_PARENT or GLOBAL_TO_PARENT, nothing else is valid.
     match reparent_policy:
         case ReparentPolicy.LOCAL_TO_PARENT:
-            forker_state = handle_LOCAL_TO_PARENT_reparent(forker_state = forker_state, exit_parent = exit_parent, curr_proc = curr_proc)
+            forker_state = handle_local_to_parent_reparent(forker_state = forker_state, exit_parent = exit_parent, curr_proc = curr_proc)
         case ReparentPolicy.GLOBAL_TO_PARENT:
-            forker_state = handle_GLOBAL_TO_PARENT_reparent(forker_state = forker_state, curr_proc = curr_proc)
+            forker_state = handle_global_to_parent_reparent(forker_state = forker_state, curr_proc = curr_proc)
     return forker_state
 
 # reparent_policy is read policy
@@ -386,8 +418,8 @@ def do_exit(forker_state: ForkerState, curr_proc: ProcessName, reparent_policy: 
     # Resolve curr_proc related Data
     forker_state.process_list.remove(curr_proc)
     forker_state.children[exit_parent].remove(curr_proc)
-    forker_state.children[curr_proc] = -1
-    forker_state.parents[curr_proc] = -1
+    del forker_state.children[p]
+    del forker_state.parents[p]
 
     exit_simulation = '%s EXITS' % curr_proc
     return exit_simulation, forker_state
@@ -406,8 +438,8 @@ def resolve_exit(exit_node_policy: ExitNodePolicy, reparent_policy: ReparentPoli
         case ExitNodePolicy.ANY_PROCESS_MAY_EXIT:
             return do_exit(forker_state, target, reparent_policy)
 
-def action_step(action: Action, forker_config: ForkerConfig, forker_state: ForkerState) -> Tuple[str, ForkerState]: 
-    # Action x ForkerConfig x ForkerState -> Simulation x ForkState. where Forktree' is different in ForkState.
+def reduce(action: Action, forker_config: ForkerConfig, forker_state: ForkerState) -> Tuple[str, ForkerState]: 
+    # Action x ForkerConfig x ForkerState -> Simulation x ForkerConfig x ForkState' x DisplayEffects. where Forktree' is different in ForkState.
     match action:
         case Fork(parent=parent, child=child):
             if parent not in forker_state.process_list:
@@ -417,35 +449,55 @@ def action_step(action: Action, forker_config: ForkerConfig, forker_state: Forke
             if target not in forker_state.process_list:
                 handle_bad_action(f'{target}-')
             return resolve_exit(forker_config.exit_node_policy, forker_config.reparent_policy, target, forker_state)
+        case _ :
+            return  AssertionError('unreachable: Action is Fork ⊎ Exit')
 
 
+# IO effects, technically they're not faithfully None types since they emit to the IO buffer state.
+# ---------------------------------------------------------------------------
+# Telemetry: display_action / display_tree, per the corrected taxonomy.
+# basis + reveal jointly decide WHAT is shown; cadence decides WHEN.
+# ---------------------------------------------------------------------------
+ 
+def display_action_step_effect(telemetry_basis: TelemetryBasis, telemetry_reveal_policy: TelemetryRevealPolicy, action_str: str) -> None:
+    if telemetry_basis== TelemetryBasis.ACTION or telemetry_reveal_policy == TelemetryRevealPolicy.REVEAL:
+        print('Action:', action_str)
+    else:
+        print('Action?')
+ 
+ 
+def display_tree_step_effect(telemetry_basis: TelemetryBasis, telemetry_reveal_policy: TelemetryRevealPolicy, forker_state: ForkerState) -> None:
+    if telemetry_basis == TelemetryBasis.TREE or telemetry_reveal_policy == TelemetryRevealPolicy.REVEAL:
+        print_tree(forker_state, forker_config)
+    else:
+        print('Process Tree?')
+ 
+def display_final_effect(telemetry_basis: TelemetryBasis, telemetry_reveal_policy: TelemetryRevealPolicy, forker_state: ForkerState) -> None:
+    if telemetry_basis == TelemetryBasis.TREE or telemetry_reveal_policy == TelemetryRevealPolicy.REVEAL:
+        print('\n                        Final Process Tree:')
+        print_tree(forker_state, forker_config)
+        print('')
+    else:
+        print('\n                        Final Process Tree?\n')
 
-# effect of emitting into IO without return.
-def handle_emit_tree(forker_config: ForkerConfig, forker_state: ForkerState) -> None:
-    if forker_config.just_final:
-        if forker_config.show_tree:
-            print('\n                        Final Process Tree:')
-            print_tree(forker_state = forker_state, forker_config = forker_config)
-            print('')
-        else:
-            if forker_config.solve:
-                print('\n                        Final Process Tree:')
-                print_tree(forker_state = forker_state, forker_config = forker_config)
-                print('')
-            else:
-                print('\n                        Final Process Tree?\n')
+def resolve_display_step(telemetry_timing_policy: TelemetryTimingPolicy, telemetry_basis: TelemetryBasis, telemetry_reveal_policy: TelemetryRevealPolicy, action_simulation: str, forker_state: ForkerState) -> None: 
+    display_action_step_effect(telemetry_basis, telemetry_reveal_policy, action_simulation)
+    if telemetry_timing_policy == TelemetryTimingPolicy.PER_STEP:
+        display_tree_step_effect(telemetry_basis, telemetry_reveal_policy, forker_state)
 
-# policy resolution
-def resolve_emit_tree():
-    pass
+def resolve_display_final(telemetry_timing_policy: TelemetryTimingPolicy, telemetry_basis: TelemetryBasis, telemetry_reveal_policy: TelemetryRevealPolicy, forker_state: ForkerState) -> None:
+    if telemetry_timing_policy == TelemetryTimingPolicy.FINAL_ONLY:
+        display_final_effect(telemetry_basis, telemetry_reveal_policy, forker_state)
 
 
 # driver taking Action* -> terminal tree state in fork_state.
-def fold_action_list(action_list: List[str], forker_config: ForkerConfig, forker_state: ForkerState) -> ForkerState:
+def fold(action_list: List[Action], forker_config: ForkerConfig, forker_state: ForkerState) -> ForkerState:
+    # monotonic embedding function on action dimension.
     for action in action_list:
-        forker_state = action_step(action, forker_config, forker_state)
+        action_simulation, forker_state = reduce(action, forker_config, forker_state)
+        resolve_display_step(forker_config.telemetry_timing_policy, forker_config.telemetry_basis, forker_config.telemetry_reveal_policy, action_simulation, forker_state)
+    resolve_display_final(forker_config.telemetry_timing_policy, forker_config.telemetry_basis, forker_config.telemetry_reveal_policy, forker_state)
     return forker_state
-
 
 
 def run(forker_config: ForkerConfig) -> None:
@@ -456,7 +508,7 @@ def run(forker_config: ForkerConfig) -> None:
 
     action_tokens = lex_action_source(forker_config, forker_state)
 
-    forker_state = fold_action_list(action_tokens, forker_config, forker_state)
+    forker_state = fold(action_tokens, forker_config, forker_state)
     
     # if forker_config.just_final:
     #     if forker_config.show_tree:
@@ -471,15 +523,6 @@ def run(forker_config: ForkerConfig) -> None:
     #         else:
     #             print('\n                        Final Process Tree?\n')
     return 
-
-
-
-        
-    
-
-    
-    
-
 
 # 0 -> Program run
 def main():

@@ -267,6 +267,15 @@ class Forker:
                     action = self.do_exit(exit_choice)
             
             # if we got here, we actually did an action...
+
+            # Partition: 
+            # Action Valid x (show_tree x solve) -> Print Action verbose
+            # Action Valid x (show_tree x ~ solve) -> Print Action?
+            # Action Valid x (show_tree x True = (solve | ~ solve) x ~just_final) -> Print Tree 
+            # Action Valid x (~ show_tree x ~ just_final x solve)
+            # Action Valid x (~ show_tree x ~ just_final x solve) -> Print Action verbose x Print Tree
+
+
             if self.show_tree:
                 # SHOW TREES (guess actions)
                 if self.solve:
