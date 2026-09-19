@@ -23,7 +23,8 @@ Union[Fork, Exit]   # the coproduct: Action = Fork ⊎ Exit
 # Correctness is by satisfication of the axiom of extensionality
 
 
-ProcessName = NewType("Process", str)
+
+ProcessName = NewType("ProcessName", str)
 
 # ADTs for the lexing of action tokens
 @dataclass(frozen=True)
@@ -39,6 +40,7 @@ class Exit:
 Action = Union[Fork, Exit]   # the coproduct: Action = Fork ⊎ Exit
 
 
+# Policies are like types of types?
 # Policies for 
 # Reparent Policy:
 class ReparentPolicy(Enum):
@@ -49,6 +51,13 @@ class ReparentPolicy(Enum):
 class ExitNodePolicy(Enum):
     ANY_PROCESS_MAY_EXIT = auto()
     ONLY_LEAVES_MAY_EXIT = auto()
+
+# Print Style Policy:
+class PrintStylePolicy(Enum):
+    LINE1 = auto()
+    LINE2 = auto()
+    FANCY = auto()
+    BASIC = auto()
 
 
 # Policies Telemetry 
@@ -62,10 +71,17 @@ class TelemetryRevealPolicy(Enum):
     REVEAL = auto()
     MASK = auto()
 
-# --- Hint: discardable without correctness loss; only affects observation cadence ---
+# --- Policy: --
 class TelemetryTimingPolicy(Enum):
     PER_STEP = auto()   # scan
     FINAL_ONLY = auto() # fold
+
+
+## Error:
+class ForkerError(Exception):
+    """The single failure channel for all Forker-level invariant violations."""
+    pass
+
 
 
 # to make Python2 and Python3 act the same -- how dumb
@@ -86,7 +102,7 @@ def random_choice(L):
 # Run time Immutable Initial Algebra.
 @dataclass(frozen=True)
 class ForkerConfig:
-    fork_percentage: int
+    fork_percentage: float
     max_actions: int
     action_list: str
     telemetry_reveal_policy: TelemetryRevealPolicy # TelemetryConfig
@@ -94,7 +110,7 @@ class ForkerConfig:
     telemetry_basis: TelemetryBasis # TelemetryConfig
     exit_node_policy: ExitNodePolicy
     reparent_policy: ReparentPolicy
-    print_style: str
+    print_style_policy: PrintStylePolicy
     solve: bool 
 
 
@@ -142,20 +158,18 @@ def new_forker_config(options) -> ForkerConfig:
     return ForkerConfig(
         fork_percentage=options.fork_percentage,
         max_actions=options.actions,
-        action_list_arg=options.action_list_arg,
-        show_tree=options.show_tree,
-        just_final=options.just_final,
-        exit_node_policy=options.exit_node_policy,
-        reparent_policy=options.reparent_policy,
-        print_style=options.print_style,
-        solve=options.solve,
+        action_list=options.action_list,
+        telemetry_basis=TelemetryBasis.TREE if options.show_tree else TelemetryBasis.ACTION,
+        telemetry_reveal_policy=TelemetryRevealPolicy.REVEAL if options.solve else TelemetryRevealPolicy.MASK,
+        telemetry_timing_policy=TelemetryTimingPolicy.FINAL_ONLY if options.just_final else TelemetryTimingPolicy.PER_STEP,
+        exit_node_policy=ExitNodePolicy.ONLY_LEAVES_MAY_EXIT if options.exit_node_policy else ExitNodePolicy.ANY_PROCESS_MAY_EXIT,
+        reparent_policy=ReparentPolicy.LOCAL_TO_PARENT if options.reparent_policy else ReparentPolicy.GLOBAL_TO_PARENT,
+        print_style_policy=PrintStylePolicy[options.print_style.upper()],
     )
 
 
-def handle_bad_action(action: str) -> None:
-    print('bad action (%s), must be X+Y or X- where X and Y are processes' % action)
-    exit(1)
-    return
+def handle_bad_action(action: str) -> None:  # NoReturn in practice
+    raise ForkerError(f'bad action ({action}), must be X+Y or X- where X and Y are processes')
 
 def lex_raw_action(token: str) -> Action:
     """Σ* → Action.  Pure syntax check only — no access to ForkerState."""
@@ -197,33 +211,29 @@ def lex_action_source(
 # pmask: {0, ..., level - 1} of type Nat -> {0,1} of type Bool.
 # Partial function for each ancestor depth if the ancesstor has still undrawn siblings below it.
 # pmask[i]=True ⟺ a_i​ is not the last child of its own parent
-# the tree is printed level by level breadth first instead of depth first.
-def walk(forker_state: ForkerState, forker_config: ForkerConfig, curr_proc: ProcessName, level: int, pmask: Dict[int, bool], is_last: bool) -> None:
+# the tree is printed level by level depth first instead of depth first.
+def walk(forker_state: ForkerState, print_style_policy: PrintStylePolicy, curr_proc: ProcessName, level: int, pmask: Dict[int, bool], is_last: bool) -> None:
     # Pre spacing
     print('                               ', end='')
 
     # Partition on print_style: str = basic | line1 | line2 | fancy
     # Match basic  to immediate recurse while others use characters to draw the chart.
-    if forker_config.print_style == "basic":
-        # No lines just space. 
-        for i in range(level):
-            print('   ', end='')
-        print('%2s' % curr_proc)
-        for child in forker_state.children[curr_proc]:
-            walk(forker_state, forker_config, child, level + 1, {}, False)
-        return
-    elif forker_config.print_style == 'line1':
-        chars = ('|', '-', '+', '|')
-    elif forker_config.print_style == 'line2':
-        chars = ('|', '_', '|', '|')
-    elif forker_config.print_style == 'fancy':
-        # these characters taken from 'treelib', a fun printing package for trees
-        # https://github.com/caesar0301/treelib
-        # chars = ('\u2502', '\u2500', '\u251c', '\u2514')
-        chars = (u'\u2502', u'\u2500', u'\u251c', u'\u2514')
-    else:
-        print('bad style %s' % forker_config.print_style)
-        exit(1)
+    match print_style_policy:
+        case PrintStylePolicy.BASIC:
+            for _ in range(level):
+                print('   ', end='')
+            print('%2s' % curr_proc)
+            for child in forker_state.children[curr_proc]:
+                walk(forker_state, print_style_policy, child, level + 1, {}, False)
+            return
+        case PrintStylePolicy.LINE1:
+            chars = ('|', '-', '+', '|')
+        case PrintStylePolicy.LINE2:
+            chars = ('|', '_', '|', '|')
+        case PrintStylePolicy.FANCY:
+            chars = (u'\u2502', u'\u2500', u'\u251c', u'\u2514')
+        case _:
+            raise ForkerError(f'bad print style: {print_style_policy!r}')
     
     # Tree drawing: if node isn't root then there are branches to nodes above it.
     # print stuff before node
@@ -255,15 +265,15 @@ def walk(forker_state: ForkerState, forker_config: ForkerConfig, curr_proc: Proc
     # recurse
     pmask[level] = True
     for child in forker_state.children[curr_proc][:-1]:
-        walk(forker_state, forker_config, child, level + 1, pmask, False)
+        walk(forker_state, print_style_policy, child, level + 1, pmask, False)
     for child in forker_state.children[curr_proc][-1:]:
-        walk(forker_state, forker_config, child, level + 1, pmask, True)
+        walk(forker_state, print_style_policy, child, level + 1, pmask, True)
     return
                 
 
 # no return
-def print_tree(forker_state: ForkerState, forker_config: ForkerConfig) -> None:
-    walk(forker_state, forker_config, forker_state.root_name, 0, {}, False)
+def print_tree(forker_state: ForkerState, print_style_policy: PrintStylePolicy) -> None:
+    walk(forker_state, print_style_policy, forker_state.root_name, 0, {}, False)
 
 
 def grow_names(forker_state: ForkerState) -> ForkerState:
@@ -304,7 +314,7 @@ def new_action_list(forker_config: ForkerConfig, forker_state:ForkerState) -> Li
             # FORK:: pick random parent, add child to it
             fork_choice = random_choice(fork_candidate_frontier)
             new_child, forker_state = get_name(forker_state) # mutation on future name bank
-            action_list.append('%s+%s' % Fork(parent=fork_choice, child=new_child))
+            action_list.append(Fork(parent=fork_choice, child=new_child))
             fork_candidate_frontier.append(new_child) #new frontier candidate
         else:
             # EXIT:: pick random child, remove it
@@ -312,27 +322,11 @@ def new_action_list(forker_config: ForkerConfig, forker_state:ForkerState) -> Li
             exit_choice = random_choice(fork_candidate_frontier)
             if exit_choice == forker_state.root_name:
                 continue
-            fork_candidate_frontier.remove(Exit(target=exit_choice))
-            action_list.append('%s-' % exit_choice)
+            fork_candidate_frontier.remove(exit_choice)
+            action_list.append(Exit(target=exit_choice))
         num_actions += 1
     return action_list
 
-
-        
-def handle_check_legal(action) ->  List[str]:
-    if '+' in action:
-        tmp = action.split('+')
-        if len(tmp) != 2:
-            handle_bad_action(action)
-        return [tmp[0], tmp[1]]
-    elif '-' in action:
-        tmp = action.split('-')
-        if len(tmp) != 2:
-            handle_bad_action(action)
-        return [tmp[0]]
-    else:
-        handle_bad_action(action)
-    return
 
 
 # Recurse through forker_state.children[curr_proc] like union find + linearization on a tree.
@@ -346,7 +340,7 @@ def collect_descendants(forker_state: ForkerState, curr_proc: ProcessName):
     else:
         L = [curr_proc]
         for c in forker_state.children[curr_proc]:
-            L += collect_descendants(c)
+            L += collect_descendants(forker_state, c)                           # in collect_descendants
         return L
 
 # Mechanisms of the action:
@@ -385,10 +379,10 @@ def handle_global_to_parent_reparent(forker_state: ForkerState, curr_proc: Proce
     descendents = collect_descendants(forker_state = forker_state, curr_proc = curr_proc)
     descendents.remove(curr_proc)
     # Append Flattened to root ForkTree
-    for descendant in descendents:
-        forker_state.children[descendant] = []
-        forker_state.parents[descendant] = forker_state.root_name
-        forker_state.children[forker_state.root_name].append(descendents)
+    for descendent in descendents:
+        forker_state.children[descendent] = []
+        forker_state.parents[descendent] = forker_state.root_name
+        forker_state.children[forker_state.root_name].append(descendent)
     return forker_state 
 
 
@@ -416,10 +410,11 @@ def do_exit(forker_state: ForkerState, curr_proc: ProcessName, reparent_policy: 
     forker_state = resolve_reparent(forker_state = forker_state, exit_parent = exit_parent, reparent_policy = reparent_policy)
     
     # Resolve curr_proc related Data
+    forker_state = resolve_reparent(forker_state, curr_proc, exit_parent, reparent_policy)
     forker_state.process_list.remove(curr_proc)
     forker_state.children[exit_parent].remove(curr_proc)
-    del forker_state.children[p]
-    del forker_state.parents[p]
+    del forker_state.children[curr_proc]
+    del forker_state.parents[curr_proc]
 
     exit_simulation = '%s EXITS' % curr_proc
     return exit_simulation, forker_state
@@ -450,7 +445,7 @@ def reduce(action: Action, forker_config: ForkerConfig, forker_state: ForkerStat
                 handle_bad_action(f'{target}-')
             return resolve_exit(forker_config.exit_node_policy, forker_config.reparent_policy, target, forker_state)
         case _ :
-            return  AssertionError('unreachable: Action is Fork ⊎ Exit')
+            raise ForkerError('unreachable: Action is Fork ⊎ Exit')
 
 
 # IO effects, technically they're not faithfully None types since they emit to the IO buffer state.
@@ -466,37 +461,72 @@ def display_action_step_effect(telemetry_basis: TelemetryBasis, telemetry_reveal
         print('Action?')
  
  
-def display_tree_step_effect(telemetry_basis: TelemetryBasis, telemetry_reveal_policy: TelemetryRevealPolicy, forker_state: ForkerState) -> None:
+def display_tree_step_effect(telemetry_basis: TelemetryBasis, print_style_policy: PrintStylePolicy, telemetry_reveal_policy: TelemetryRevealPolicy, forker_state: ForkerState) -> None:
     if telemetry_basis == TelemetryBasis.TREE or telemetry_reveal_policy == TelemetryRevealPolicy.REVEAL:
-        print_tree(forker_state, forker_config)
+        print_tree(forker_state, print_style_policy)
     else:
         print('Process Tree?')
  
-def display_final_effect(telemetry_basis: TelemetryBasis, telemetry_reveal_policy: TelemetryRevealPolicy, forker_state: ForkerState) -> None:
+def display_final_effect(telemetry_basis: TelemetryBasis, print_style_policy: PrintStylePolicy, telemetry_reveal_policy: TelemetryRevealPolicy, forker_state: ForkerState) -> None:
     if telemetry_basis == TelemetryBasis.TREE or telemetry_reveal_policy == TelemetryRevealPolicy.REVEAL:
         print('\n                        Final Process Tree:')
-        print_tree(forker_state, forker_config)
+        print_tree(forker_state, print_style_policy)
         print('')
     else:
         print('\n                        Final Process Tree?\n')
 
-def resolve_display_step(telemetry_timing_policy: TelemetryTimingPolicy, telemetry_basis: TelemetryBasis, telemetry_reveal_policy: TelemetryRevealPolicy, action_simulation: str, forker_state: ForkerState) -> None: 
+def resolve_display_step(
+    telemetry_timing_policy: TelemetryTimingPolicy,
+    telemetry_basis: TelemetryBasis,
+    telemetry_reveal_policy: TelemetryRevealPolicy,
+    action_simulation: str,
+    forker_state: ForkerState,
+    print_style_policy: PrintStylePolicy,
+) -> None:
     display_action_step_effect(telemetry_basis, telemetry_reveal_policy, action_simulation)
     if telemetry_timing_policy == TelemetryTimingPolicy.PER_STEP:
-        display_tree_step_effect(telemetry_basis, telemetry_reveal_policy, forker_state)
+        display_tree_step_effect(
+            telemetry_basis, print_style_policy, telemetry_reveal_policy, forker_state
+        )
 
-def resolve_display_final(telemetry_timing_policy: TelemetryTimingPolicy, telemetry_basis: TelemetryBasis, telemetry_reveal_policy: TelemetryRevealPolicy, forker_state: ForkerState) -> None:
+
+def resolve_display_final(
+    telemetry_timing_policy: TelemetryTimingPolicy,
+    telemetry_basis: TelemetryBasis,
+    telemetry_reveal_policy: TelemetryRevealPolicy,
+    forker_state: ForkerState,
+    print_style_policy: PrintStylePolicy,
+) -> None:
     if telemetry_timing_policy == TelemetryTimingPolicy.FINAL_ONLY:
-        display_final_effect(telemetry_basis, telemetry_reveal_policy, forker_state)
+        display_final_effect(
+            telemetry_basis, telemetry_reveal_policy, forker_state, print_style_policy
+        )
 
 
 # driver taking Action* -> terminal tree state in fork_state.
-def fold(action_list: List[Action], forker_config: ForkerConfig, forker_state: ForkerState) -> ForkerState:
+def fold(
+    action_list: List[Action],
+    forker_config: ForkerConfig,
+    forker_state: ForkerState,
+) -> ForkerState:
     # monotonic embedding function on action dimension.
     for action in action_list:
         action_simulation, forker_state = reduce(action, forker_config, forker_state)
-        resolve_display_step(forker_config.telemetry_timing_policy, forker_config.telemetry_basis, forker_config.telemetry_reveal_policy, action_simulation, forker_state)
-    resolve_display_final(forker_config.telemetry_timing_policy, forker_config.telemetry_basis, forker_config.telemetry_reveal_policy, forker_state)
+        resolve_display_step(
+            forker_config.telemetry_timing_policy,
+            forker_config.telemetry_basis,
+            forker_config.telemetry_reveal_policy,
+            action_simulation,
+            forker_state,
+            forker_config.print_style_policy
+        )
+    resolve_display_final(
+        forker_config.telemetry_timing_policy,
+        forker_config.telemetry_basis,
+        forker_config.telemetry_reveal_policy,
+        forker_state,
+        forker_config.print_style_policy,
+    )
     return forker_state
 
 
@@ -532,10 +562,15 @@ def main():
     # Pre run seed
     if options.seed != -1:
         random_seed(options.seed)
+
+    # I still really don't like the try except part
     # Prerun config assertion
-    if options.fork_percentage <= 0.001:
-        print('fork_percentage must be > 0.001')
-        exit(1)
+    try:
+        if options.fork_percentage <= 0.001:
+            raise ForkerError('fork_percentage must be > 0.001')
+    except ForkerError as e:
+        print(f'error: {e}')
+        sys.exit(1)
 
     
     config = new_forker_config(options)
