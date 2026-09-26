@@ -1,12 +1,11 @@
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, replace, fields
 from typing import Dict, List
 import string
 from optparse import OptionParser
 from enum import Enum, auto
 import random
 import sys
-from typing import Dict, List, Tuple, NewType, Union
-Union[Fork, Exit]   # the coproduct: Action = Fork ⊎ Exit
+from typing import Dict, List, Tuple, NewType, Union, Type, TypeVar
 
 
 # Couple of things which my code more navigable: geometry, 
@@ -61,17 +60,20 @@ class PrintStylePolicy(Enum):
 
 
 # Policies Telemetry 
+# Used to be show_tree 
 # --- Naming: orientation/canonical representative under the tree↔action duality ---
 class TelemetryBasis(Enum):
     TREE = auto()
     ACTION = auto()
 
 # --- Policy: governs the mechanism/display boundary (does not touch Q) ---
+# Used to be Solve
 class TelemetryRevealPolicy(Enum):
-    REVEAL = auto()
+    REVEAL = auto()  
     MASK = auto()
 
 # --- Policy: --
+# Used to be just_final
 class TelemetryTimingPolicy(Enum):
     PER_STEP = auto()   # scan
     FINAL_ONLY = auto() # fold
@@ -111,7 +113,6 @@ class ForkerConfig:
     exit_node_policy: ExitNodePolicy
     reparent_policy: ReparentPolicy
     print_style_policy: PrintStylePolicy
-    solve: bool 
 
 
 @dataclass
@@ -138,18 +139,49 @@ def new_forker_state() -> ForkerState:
         curr_index=1,
     )
 
+
+P = TypeVar("P", bound=Enum)
+
+def token_of(member: Enum) -> str:
+    """P -> C_P"""
+    return member.name.lower()
+
+def choices_of(policy: Type[P]) -> List[str]:
+    """C_P as the finite set optparse enforces"""
+    return [token_of(member) for member in policy]
+
+def policy_of(policy: Type[P], token: str) -> P:
+    """C_P -> P, the inverse of token_of. Total on optparse's output."""
+    return policy[token.upper()]
+
+def show_arg(value: object) -> str:
+    return value.name if isinstance(value, Enum) else str(value)
+
+
+def add_policy_option(parser: OptionParser, short: str, long: str, policy: Type[P], default: P, help: str) -> None:
+    parser.add_option(
+        short, long,
+        action='store', type='choice',
+        choices=choices_of(policy),
+        default=token_of(default),
+        dest=long.lstrip('-'),          # dest == ForkerConfig field name
+        help=help + ' [default: %default]',
+    )
+
 def parse(args: List[str]) -> Tuple[object, List[str]]:
     parser = OptionParser()
     parser.add_option('-s', '--seed', default=-1, help='the random seed', action='store', type='int', dest='seed')
-    parser.add_option('-f', '--forks', default=0.7, help='percent of actions that are forks (not exits)', action='store', type='float', dest='fork_percentage')
-    parser.add_option('-A', '--action_list_arg', default='', help='action list, instead of randomly generated ones (format: a+b,b+c,b- means a fork b, b fork c, b exit)', action='store', type='string', dest='action_list')
-    parser.add_option('-a', '--actions', default=5, help='number of forks/exits to do', action='store', type='int', dest='actions')
-    parser.add_option('-t', '--show_tree', help='show tree (not actions)', action='store_true', default=False, dest='show_tree')
-    parser.add_option('-P', '--print_style', help='tree print style (basic, line1, line2, fancy)', action='store', type='string', default='fancy', dest='print_style')
-    parser.add_option('-F', '--final_only', help='just show final state', action='store_true', default=False, dest='just_final')
-    parser.add_option('-L', '--exit_node_policy', help='only leaf processes exit', action='store_true', default=False, dest='exit_node_policy')
-    parser.add_option('-R', '--reparent_policy', help='LOCAL_TO_PARENT or GLOBAL_TO_PARENT', action='store_true', default=False, dest='reparent_policy')
-    parser.add_option('-c', '--compute', help='compute answers for me', action='store_true', default=False, dest='solve')
+    parser.add_option('-f', '--forks', default=0.7, help='fraction of actions that are forks (not exits)', action='store', type='float', dest='fork_percentage')
+    parser.add_option('-a', '--actions', default=5, help='number of forks/exits to do', action='store', type='int', dest='max_actions')
+    parser.add_option('-A', '--action_list', default='', help='action list instead of random ones (format: a+b,b+c,b- means a fork b, b fork c, b exit)', action='store', type='string', dest='action_list')
+
+    add_policy_option(parser, '-B', '--telemetry_basis',         TelemetryBasis,        TelemetryBasis.ACTION,          'which side is shown unmasked')
+    add_policy_option(parser, '-V', '--telemetry_reveal_policy', TelemetryRevealPolicy, TelemetryRevealPolicy.MASK,     'reveal or mask the non-basis side')
+    add_policy_option(parser, '-T', '--telemetry_timing_policy', TelemetryTimingPolicy, TelemetryTimingPolicy.PER_STEP, 'display every step (scan) or only the end (fold)')
+    add_policy_option(parser, '-L', '--exit_node_policy',        ExitNodePolicy,        ExitNodePolicy.ANY_PROCESS_MAY_EXIT, 'which processes may exit')
+    add_policy_option(parser, '-R', '--reparent_policy',         ReparentPolicy,        ReparentPolicy.GLOBAL_TO_PARENT,     'where orphans go on exit')
+    add_policy_option(parser, '-P', '--print_style_policy',      PrintStylePolicy,      PrintStylePolicy.FANCY,              'tree print style')
+
     (options, parsed_args) = parser.parse_args(args)
     return options, parsed_args
 
@@ -157,14 +189,14 @@ def parse(args: List[str]) -> Tuple[object, List[str]]:
 def new_forker_config(options) -> ForkerConfig:
     return ForkerConfig(
         fork_percentage=options.fork_percentage,
-        max_actions=options.actions,
+        max_actions=options.max_actions,
         action_list=options.action_list,
-        telemetry_basis=TelemetryBasis.TREE if options.show_tree else TelemetryBasis.ACTION,
-        telemetry_reveal_policy=TelemetryRevealPolicy.REVEAL if options.solve else TelemetryRevealPolicy.MASK,
-        telemetry_timing_policy=TelemetryTimingPolicy.FINAL_ONLY if options.just_final else TelemetryTimingPolicy.PER_STEP,
-        exit_node_policy=ExitNodePolicy.ONLY_LEAVES_MAY_EXIT if options.exit_node_policy else ExitNodePolicy.ANY_PROCESS_MAY_EXIT,
-        reparent_policy=ReparentPolicy.LOCAL_TO_PARENT if options.reparent_policy else ReparentPolicy.GLOBAL_TO_PARENT,
-        print_style_policy=PrintStylePolicy[options.print_style.upper()],
+        telemetry_basis=policy_of(TelemetryBasis, options.telemetry_basis),
+        telemetry_reveal_policy=policy_of(TelemetryRevealPolicy, options.telemetry_reveal_policy),
+        telemetry_timing_policy=policy_of(TelemetryTimingPolicy, options.telemetry_timing_policy),
+        exit_node_policy=policy_of(ExitNodePolicy, options.exit_node_policy),
+        reparent_policy=policy_of(ReparentPolicy, options.reparent_policy),
+        print_style_policy=policy_of(PrintStylePolicy, options.print_style_policy),
     )
 
 
@@ -554,43 +586,30 @@ def run(forker_config: ForkerConfig) -> None:
     #             print('\n                        Final Process Tree?\n')
     return 
 
-# 0 -> Program run
-def main():
-    args = sys.argv[1:]
-    (options, parsed_args) = parse(args)
+def echo_args(seed: int, forker_config: ForkerConfig) -> None:
+    print('')
+    print('ARG seed', seed)
+    for field in fields(forker_config):
+        print('ARG', field.name, show_arg(getattr(forker_config, field.name)))
+    print('')
 
-    # Pre run seed
+
+# 1 -> Program run.
+def main():
+    (options, _) = parse(sys.argv[1:])
+    forker_config = new_forker_config(options)
+
+    # Pre-run assertions, on the config the run will actually use
+    if forker_config.fork_percentage <= 0.001:
+        print('fork_percentage must be > 0.001')
+        exit(1)
+
+    # Effect on the global RNG; seed is not part of ForkerConfig
     if options.seed != -1:
         random_seed(options.seed)
 
-    # I still really don't like the try except part
-    # Prerun config assertion
-    try:
-        if options.fork_percentage <= 0.001:
-            raise ForkerError('fork_percentage must be > 0.001')
-    except ForkerError as e:
-        print(f'error: {e}')
-        sys.exit(1)
-
-    
-    config = new_forker_config(options)
-    run(config)
-   
-
-
-    print('')
-    print('ARG seed', options.seed)
-    print('ARG fork_percentage', options.fork_percentage)
-    print('ARG actions', options.actions)
-    print('ARG action_list', options.action_list)
-    print('ARG show_tree', options.show_tree)
-    print('ARG just_final', options.just_final)
-    print('ARG exit_node_policy', options.exit_node_policy)
-    print('ARG reparent_policy', options.reparent_policy)
-    print('ARG print_style', options.print_style)
-    print('ARG solve', options.solve)
-    print('')
-
+    run(forker_config)
+    echo_args(options.seed, forker_config)
 
 
 
