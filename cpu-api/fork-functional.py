@@ -106,7 +106,7 @@ def random_choice(L):
 class ForkerConfig:
     fork_percentage: float
     max_actions: int
-    action_list: str
+    action_list_str: str
     telemetry_reveal_policy: TelemetryRevealPolicy # TelemetryConfig
     telemetry_timing_policy: TelemetryTimingPolicy # TelemetryConfig
     telemetry_basis: TelemetryBasis # TelemetryConfig
@@ -173,7 +173,7 @@ def parse(args: List[str]) -> Tuple[object, List[str]]:
     parser.add_option('-s', '--seed', default=-1, help='the random seed', action='store', type='int', dest='seed')
     parser.add_option('-f', '--forks', default=0.7, help='fraction of actions that are forks (not exits)', action='store', type='float', dest='fork_percentage')
     parser.add_option('-a', '--actions', default=5, help='number of forks/exits to do', action='store', type='int', dest='max_actions')
-    parser.add_option('-A', '--action_list', default='', help='action list instead of random ones (format: a+b,b+c,b- means a fork b, b fork c, b exit)', action='store', type='string', dest='action_list')
+    parser.add_option('-A', '--action_list_str', default='', help='action list instead of random ones (format: a+b,b+c,b- means a fork b, b fork c, b exit)', action='store', type='string', dest='action_list_str')
 
     add_policy_option(parser, '-B', '--telemetry_basis',         TelemetryBasis,        TelemetryBasis.ACTION,          'which side is shown unmasked')
     add_policy_option(parser, '-V', '--telemetry_reveal_policy', TelemetryRevealPolicy, TelemetryRevealPolicy.MASK,     'reveal or mask the non-basis side')
@@ -190,7 +190,7 @@ def new_forker_config(options) -> ForkerConfig:
     return ForkerConfig(
         fork_percentage=options.fork_percentage,
         max_actions=options.max_actions,
-        action_list=options.action_list,
+        action_list_str=options.action_list_str,
         telemetry_basis=policy_of(TelemetryBasis, options.telemetry_basis),
         telemetry_reveal_policy=policy_of(TelemetryRevealPolicy, options.telemetry_reveal_policy),
         telemetry_timing_policy=policy_of(TelemetryTimingPolicy, options.telemetry_timing_policy),
@@ -231,8 +231,8 @@ def lex_action_source(
     Generated(List[Action]) -- otherwise -> new_action_list already returns Action directly
     Both branches converge on the same codomain: List[Action].
     """
-    if forker_config.action_list_arg != '':
-        tokens = forker_config.action_list_arg.split(',')
+    if forker_config.action_list_str != '':
+        tokens = forker_config.action_list_str.split(',')
         return [lex_raw_action(t) for t in tokens]
     else:
         return new_action_list(forker_config, forker_state)   # see retyped version below
@@ -378,7 +378,7 @@ def collect_descendants(forker_state: ForkerState, curr_proc: ProcessName):
 # Mechanisms of the action:
 # State mutator
 def do_fork(forker_state: ForkerState, parent_proc: ProcessName, child_proc: ProcessName) -> Tuple[str, ForkerState]:
-    forker_state.process_list.append()
+    forker_state.process_list.append(child_proc)
     forker_state.children[child_proc] = []
     forker_state.children[parent_proc].append(child_proc)
     forker_state.parents[child_proc] = parent_proc
@@ -439,10 +439,8 @@ def do_exit(forker_state: ForkerState, curr_proc: ProcessName, reparent_policy: 
 
     # for all proc != curr_proc Data:
     # resolve forktree -> forktree \ curr_proc 
-    forker_state = resolve_reparent(forker_state = forker_state, exit_parent = exit_parent, reparent_policy = reparent_policy)
+    forker_state = resolve_reparent(forker_state = forker_state, curr_proc= curr_proc, exit_parent = exit_parent, reparent_policy = reparent_policy)
     
-    # Resolve curr_proc related Data
-    forker_state = resolve_reparent(forker_state, curr_proc, exit_parent, reparent_policy)
     forker_state.process_list.remove(curr_proc)
     forker_state.children[exit_parent].remove(curr_proc)
     del forker_state.children[curr_proc]
@@ -565,7 +563,7 @@ def fold(
 def run(forker_config: ForkerConfig) -> None:
     forker_state = new_forker_state()
     print('                           Process Tree:')
-    print_tree(forker_state = forker_state, forker_config = forker_config)
+    print_tree(forker_state, forker_config.print_style_policy)
     print('')
 
     action_tokens = lex_action_source(forker_config, forker_state)
