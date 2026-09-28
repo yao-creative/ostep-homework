@@ -269,23 +269,22 @@ def walk(forker_state: ForkerState, print_style_policy: PrintStylePolicy, curr_p
     
     # Tree drawing: if node isn't root then there are branches to nodes above it.
     # print stuff before node
-    if level > 0: 
-        # main printing
-        for i in range(level -1):
+    if level > 0:
+        # ancestor columns: one per level strictly above the parent
+        for i in range(level - 1):
             if pmask[i]:
-                 # '|  '
-                print('%s   ' % chars[0], end='')
+                print('%s   ' % chars[0], end='')   # vertical continuation
             else:
                 print('    ', end='')
-            if pmask[level-1]:
-                # '|__'
-                if is_last:
-                    print('%s%s%s ' % (chars[3], chars[1], chars[1]), end='')
-                else:
-                    print('%s%s%s ' % (chars[2], chars[1], chars[1]), end='')
+
+        # connector to this node: emitted exactly once (outside the loop)
+        if pmask[level - 1]:
+            if is_last:
+                print('%s%s%s ' % (chars[3], chars[1], chars[1]), end='')  # last-child elbow
             else:
-                # '___' 
-                print(' %s%s%s ' % (chars[1], chars[1], chars[1]), end='')
+                print('%s%s%s ' % (chars[2], chars[1], chars[1]), end='')  # tee
+        else:
+            print(' %s%s%s ' % (chars[1], chars[1], chars[1]), end='')
 
     # print node
     print('%s' % curr_proc)
