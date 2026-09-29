@@ -43,17 +43,67 @@ instead of hello good bye, i created a partition based solution. that child is a
 ## A
 <!-- todo -->
 
+Due to no function over loading: different axes for environment, argument variables to the script execution and 
+| $b_c$ | $b_r$ | $b_i$ | Name | Arg | Location | Env | Python signature | glibc |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 0 | 0 | 0 | [execve](https://man7.org/linux/man-pages/man2/execve.2.html) | seq | literal | explicit | yes (syscall wrapper) |
+| 0 | 0 | 1 | [execv](https://man7.org/linux/man-pages/man2/execve.2.html) | seq | literal | inherit | yes |
+| 0 | 1 | 0 | [execvpe](https://man7.org/linux/man-pages/man3/execvpe.3.html) | seq | PATH | explicit | yes (GNU extension) |
+| 0 | 1 | 1 | [execvp](https://man7.org/linux/man-pages/man3/execvp.3.html) | seq | PATH | inherit | yes |
+| 1 | 0 | 0 | [execle](https://man7.org/linux/man-pages/man3/execle.3.html) | list | literal | explicit | yes |
+| 1 | 0 | 1 | [execl](https://man7.org/linux/man-pages/man3/execl.3.html) | list | literal | inherit | yes |
+| 1 | 1 | 0 | - | list | PATH | explicit | no |
+| 1 | 1 | 1 | [execlp](https://man7.org/linux/man-pages/man3/execlp.3.html) | list | PATH | inherit | yes |
 
-## Q
-5. Nowwriteaprogramthatuseswait()towaitforthechildprocess to finish in the parent. What does wait() return? What happens if you use wait() in the child?
+
+## Q:
+5. Now write a program that uses wait() to waitforthechildprocess to finish in the parent. What does wait() return? What happens if you use wait() in the child?
+
+## A:
+```
+In Child process-
+Process ID: 81880
+Hello ! Geeks
+Exiting
+
+In parent process-
+Terminated child's process id: 81880
+Signal number that killed the child process: 0
+```
+wait returns the exit status of the child 0 on success. 
 
 ## Q 
-6. Write a slight modification of the previous program, this time us- ing waitpid() instead of wait(). When would waitpid() be useful?
+6. Write a slight modification of the previous program, this time using waitpid() instead of wait(). When would waitpid() be useful?
 
-## A
+
+
+## A:
+wait pid would be useful when multiple children and the main process or the waiting process only wants one and a specific one. Normal wait is when any child process terminates.
+
+
 
 ## Q
 7. Write a program that creates a child process, and then in the child closes standard output (STDOUT FILENO). What happens if the child calls printf() to print some output after closing the descriptor?
 
+## A:
+file descriptor is uniquely per process table reference of file descriptors to the actual Kernel owned open file descriptors. Hence the child process no longer has reference to the open file descriptor however parent still can access it because of it's own table.
+
+```
+Traceback (most recent call last):
+  File "/Users/yao/projects/ostep-homework/cpu-api/more-homework-stuff/homework.py", line 270, in <module>
+    main()
+    ~~~~^^
+  File "/Users/yao/projects/ostep-homework/cpu-api/more-homework-stuff/homework.py", line 266, in main
+    Q.question7()
+    ~~~~~~~~~~~^^
+  File "/Users/yao/projects/ostep-homework/cpu-api/more-homework-stuff/homework.py", line 258, in question7
+    print("Hello after closing stdout file")
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+OSError: [Errno 9] Bad file descriptor
+Exception ignored while flushing sys.stdout:
+OSError: [Errno 9] Bad file descriptor
+```
+
+
 ## Q
-8. Write a program that creates two children, and connects the stan- dard output of one to the standard input of the other, using the pipe() system call.
+8. Write a program that creates two children, and connects the standard output of one to the standard input of the other, using the pipe() system call.
