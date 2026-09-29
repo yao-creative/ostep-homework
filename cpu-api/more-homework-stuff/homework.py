@@ -262,6 +262,8 @@ class QuestionAPI:
             print("main still can print huh")
 
     
+
+    # OLD
     @staticmethod
     def question8():
         """
@@ -304,6 +306,7 @@ class QuestionAPI:
         # create pipe file descriptors
         r, w = os.pipe()
         
+        # Unguarded fork child also forks.
         pid = os.fork()
         pid2 = os.fork()
         if pid == 0: 
@@ -336,11 +339,57 @@ class QuestionAPI:
             
             os.waitpid(pid, 0)
             os.waitpid(pid2, 0)
-
             print("\nIn parent process-")
-            
 
-    
+
+    @staticmethod
+    def question8_attempt2():
+        MESSAGE = b"hello child 2, from child 1 \n"
+
+        # Conventional File descriptors. 
+        # |   FD | Conventional name | Default target        |
+        # | ---: | ----------------- | --------------------- |
+        # |  `0` | `stdin`           | standard input        |
+        # |  `1` | `stdout`          | standard output       |
+        # |  `2` | `stderr`          | standard error        |
+        # | `3+` | —                 | initially unused/free |
+
+
+
+
+        def writer(r: int, w: int) -> None:
+            # Drop the end this role doesn't use reading
+            os.close(r)
+
+            os.write(w, MESSAGE)
+            os.close(w)
+            os._exit(0)
+        
+        def reader(r: int, w: int) -> None:
+            """Child 2 : owns only read end, rewried into stdin"""
+            os.close(w)     # otherwise it would keep its own EOF from arriving
+            os.dup2(r, 0)   # Slot 0 -> same description as r, set stdin to be read. 
+            os.close(r)
+            data = sys.stdin.read()
+            os.write(1, f"Child 2 processed: {data.upper()}".encode())
+            os._exit(0)
+
+        r, w = os.pipe()
+        pid1 = os.fork()
+        if pid1 == 0:
+            writer(r,w)
+        # never returns so child never reaches 2nd fork
+
+        pid2 = os.fork()
+        if pid2 == 0:
+            reader(r,w)     # Never returns
+        
+        os.close(r)         # parents use neither of the channel
+        os.close(w)
+        os.waitpid(pid1, 0)
+        os.waitpid(pid2, 0)
+        
+
 
     # Check if the caller stack terminates the forked child or not.
     @staticmethod
@@ -361,7 +410,7 @@ class QuestionAPI:
                 print("Terminated child's process id:", status[0])
                 print("Signal number that killed the child process:", status[1])
             
-
+        inner_fork()
         print("outer print with Process ID: ",  os.getpid())
 
 
@@ -370,7 +419,7 @@ class QuestionAPI:
 
 def main():
     Q = QuestionAPI()
-    Q.question8()
+    Q.question8_attempt2()
 
 
 if __name__ == '__main__':
